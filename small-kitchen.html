@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cozy Miniature Clay Kitchen Diorama</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js, OrbitControls, and Tween.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #beb7ab;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #clayCanvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      outline: none;
+    }
+    .clay-glass {
+      background: rgba(250, 246, 239, 0.82);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+    }
+    .clay-shadow {
+      box-shadow: 0 14px 34px -6px rgba(70, 58, 48, 0.16), 0 6px 14px -3px rgba(70, 58, 48, 0.08);
+    }
+  </style>
+</head>
+<body class="relative w-screen h-screen">
+
+  <canvas id="clayCanvas"></canvas>
+
+  <!-- Top-left Brand & Color Palette -->
+  <header class="absolute top-5 left-5 z-20 pointer-events-none flex flex-col gap-2.5">
+    <div class="pointer-events-auto clay-glass rounded-2xl px-4 py-3 clay-shadow flex items-center gap-3.5">
+      <div class="w-10 h-10 rounded-xl bg-[#cb8a58] flex items-center justify-center text-white text-xl shadow-inner">
+        🥖
+      </div>
+      <div>
+        <h1 class="text-sm font-bold text-[#44382e] tracking-wide">温暖陶泥微缩厨房</h1>
+        <p class="text-[11px] text-[#867566]">3D Clay Shader • 精细微缩复刻</p>
+      </div>
+    </div>
+
+    <!-- Match Reference Palette Dots -->
+    <div class="pointer-events-auto clay-glass rounded-xl px-3 py-1.5 clay-shadow flex items-center gap-2 self-start">
+      <span class="text-[10px] text-[#78695d] font-semibold mr-0.5">调色板:</span>
+      <div class="w-4 h-4 rounded-full border border-white/70 shadow-xs" style="background:#cf9768" title="焦糖陶木"></div>
+      <div class="w-4 h-4 rounded-full border border-white/70 shadow-xs" style="background:#b5cdbe" title="复古薄荷绿"></div>
+      <div class="w-4 h-4 rounded-full border border-white/70 shadow-xs" style="background:#f4eee3" title="暖乳白陶土"></div>
+      <div class="w-4 h-4 rounded-full border border-white/70 shadow-xs" style="background:#d9683e" title="赤陶花盆红"></div>
+      <div class="w-4 h-4 rounded-full border border-white/70 shadow-xs" style="background:#beb7ab" title="摄影棚背底"></div>
+    </div>
+  </header>
+
+  <!-- Bottom Interactive Action Bar -->
+  <footer class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2.5 clay-glass px-4 py-2.5 rounded-full clay-shadow text-xs font-semibold text-[#54463a]">
+    <button id="btn-mood" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white text-[#4a3d32] transition shadow-xs">
+      <span id="mood-icon">☀️</span> <span id="mood-text">暖阳午后</span>
+    </button>
+    <div class="w-[1px] h-4 bg-[#cfc5b8]"></div>
+    <button id="btn-faucet" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-white/60 transition">
+      🚰 <span>放水</span>
+    </button>
+    <div class="w-[1px] h-4 bg-[#cfc5b8]"></div>
+    <button id="btn-window" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-white/60 transition">
+      🪟 <span>推窗</span>
+    </button>
+    <div class="w-[1px] h-4 bg-[#cfc5b8]"></div>
+    <button id="btn-oven" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-white/60 transition">
+      🔥 <span>烤箱</span>
+    </button>
+    <div class="w-[1px] h-4 bg-[#cfc5b8]"></div>
+    <button id="btn-reset" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-white/60 transition" title="恢复默认等距视角">
+      🔄 <span>视角</span>
+    </button>
+  </footer>
+
+  <!-- Floating Toast Notification -->
+  <div id="interactive-toast" class="absolute top-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none opacity-0 transition-opacity duration-300 clay-glass px-4 py-1.5 rounded-full text-xs font-semibold text-[#58483b] shadow-sm">
+    已开启温暖的烤箱内灯
+  </div>
+
+  <script>
+    window.addEventListener('error', function (event) {
+      try { window.parent.postMessage({ type:'home-scene-error', room:'smallkitchen', message:String(event.message || event.error || 'scene error') }, '*'); } catch (e) {}
+    });
+    const canvas = document.getElementById('clayCanvas');
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance'
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Exactly matches clay render color richness
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+
+    const scene = new THREE.Scene();
+    let customAvatars = { me: null };
+    const studioBgColor = new THREE.Color(0xbeb7ab);
+    scene.background = studioBgColor;
+
+    // True 45° isometric orthographic setup
+    const orthoExtent = 5.9;
+    let aspect = window.innerWidth / window.innerHeight;
+    const camera = new THREE.OrthographicCamera(
+      -orthoExtent * aspect, orthoExtent * aspect,
+      orthoExtent, -orthoExtent,
+      0.1, 100
+    );
+    const defaultCamPos = new THREE.Vector3(12.5, 11.5, 12.5);
+    const defaultLookAt = new THREE.Vector3(0, 1.45, 0);
+    camera.position.copy(defaultCamPos);
+    camera.lookAt(defaultLookAt);
+
+    const controls = new THREE.OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.copy(defaultLookAt);
+    controls.minZoom = 0.6;
+    controls.maxZoom = 2.4;
+    controls.minPolarAngle = Math.PI / 4.4;
+    controls.maxPolarAngle = Math.PI / 2.2;
+    controls.minAzimuthAngle = -Math.PI / 16;
+    controls.maxAzimuthAngle = Math.PI / 1.75;
+
+    const PALETTE = {
+      wallPlaster: 0xf4eee3,
+      wallWoodCoping: 0xcf9768,
+      toffeeWood: 0xd59868,
+      toffeeWoodDark: 0xc48858,
+      floorPlank: 0xd69f72,
+      floorPlankEdge: 0xc08759,
+      cabinetWhite: 0xfbf8f3,
+      sageMint: 0xb5cdbe,
+      sageMintDark: 0x9cb8a6,
+      crustBread: 0xcf8245,
+      terracottaPot: 0xd9683e,
+      plantGreenDark: 0x24542d,
+      plantGreenMid: 0x3d7848,
+      metalChrome: 0xe0e0e0,
+      metalBrass: 0xd9ad52,
+      fairyGlow: 0xfffaea,
+      ovenWarmGlow: 0xff9f43
+    };
+
+    // Shared soft-clay matte materials
+    const mats = {
+      wall: new THREE.MeshStandardMaterial({ color: PALETTE.wallPlaster, roughness: 0.9, metalness: 0.01 }),
+      wallCoping: new THREE.MeshStandardMaterial({ color: PALETTE.wallWoodCoping, roughness: 0.62 }),
+      countertop: new THREE.MeshStandardMaterial({ color: PALETTE.toffeeWood, roughness: 0.58 }),
+      countertopDark: new THREE.MeshStandardMaterial({ color: PALETTE.toffeeWoodDark, roughness: 0.6 }),
+      floor: new THREE.MeshStandardMaterial({ color: PALETTE.floorPlank, roughness: 0.66 }),
+      cabinet: new THREE.MeshStandardMaterial({ color: PALETTE.cabinetWhite, roughness: 0.72 }),
+      mintAppliance: new THREE.MeshStandardMaterial({ color: PALETTE.sageMint, roughness: 0.45, metalness: 0.08 }),
+      mintDark: new THREE.MeshStandardMaterial({ color: PALETTE.sageMintDark, roughness: 0.5 }),
+      bread: new THREE.MeshStandardMaterial({ color: PALETTE.crustBread, roughness: 0.9 }),
+      terracotta: new THREE.MeshStandardMaterial({ color: PALETTE.terracottaPot, roughness: 0.8 }),
+      chrome: new THREE.MeshStandardMaterial({ color: PALETTE.metalChrome, roughness: 0.22, metalness: 0.85 }),
+      brass: new THREE.MeshStandardMaterial({ color: PALETTE.metalBrass, roughness: 0.35, metalness: 0.65 }),
+      ceramic: new THREE.MeshStandardMaterial({ color: 0xfcfbfa, roughness: 0.28 }),
+      glass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.42, roughness: 0.06, transmission: 0.9 }),
+      fairyBulb: new THREE.MeshBasicMaterial({ color: PALETTE.fairyGlow })
+    };
+
+    const hemiLight = new THREE.HemisphereLight(0xfff7ed, 0x8a8274, 0.85);
+    scene.add(hemiLight);
+
+    // Warm main sun keylight coming from high-front-left (soft velvety shadows)
+    const sunLight = new THREE.DirectionalLight(0xfffaec, 1.48);
+    sunLight.position.set(11.5, 17, 9.5);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 1.0;
+    sunLight.shadow.camera.far = 45;
+    const sSize = 7.6;
+    sunLight.shadow.camera.left = -sSize;
+    sunLight.shadow.camera.right = sSize;
+    sunLight.shadow.camera.top = sSize;
+    sunLight.shadow.camera.bottom = -sSize;
+    sunLight.shadow.bias = -0.0007;
+    scene.add(sunLight);
+
+    // Warm bounced ambient fill
+    const bounceLight = new THREE.DirectionalLight(0xffedd9, 0.45);
+    bounceLight.position.set(-9, 7, -9);
+    scene.add(bounceLight);
+
+    // Oven interior amber point light
+    const ovenLight = new THREE.PointLight(PALETTE.ovenWarmGlow, 1.25, 3.8, 2);
+    ovenLight.position.set(2.8, 1.05, -1.2);
+    scene.add(ovenLight);
+
+    // Cozy garland lights ambient glow
+    const garlandPointLight = new THREE.PointLight(0xffeed6, 0.75, 4.6, 2);
+    garlandPointLight.position.set(0.6, 4.25, -3.3);
+    scene.add(garlandPointLight);
+
+    const roomGroup = new THREE.Group();
+    scene.add(roomGroup);
+
+    const ROOM_W = 7.5;
+    const ROOM_H = 5.6;
+    const WALL_THICK = 0.44;
+
+    // Solid White Platform Base (raised clay diorama tray)
+    const baseTrayGeo = new THREE.BoxGeometry(ROOM_W + 0.55, 0.42, ROOM_W + 0.55);
+    const baseTrayMat = new THREE.MeshStandardMaterial({ color: 0xfbf8f3, roughness: 0.95 });
+    const baseTray = new THREE.Mesh(baseTrayGeo, baseTrayMat);
+    baseTray.position.set(0, -0.21, 0);
+    baseTray.receiveShadow = true;
+    roomGroup.add(baseTray);
+
+    // Wide floorboards laid along the angled perspective with rounded bullnose front borders
+    const plankCount = 8;
+    const plankLen = ROOM_W;
+    const plankW = ROOM_W / plankCount - 0.035;
+    const plankH = 0.14;
+    const plankGeo = new THREE.BoxGeometry(plankLen, plankH, plankW);
+
+    for (let i = 0; i < plankCount; i++) {
+      const plank = new THREE.Mesh(plankGeo, mats.floor);
+      const zPos = -ROOM_W / 2 + (i + 0.5) * (ROOM_W / plankCount);
+      plank.position.set(0, plankH / 2, zPos);
+      plank.receiveShadow = true;
+      roomGroup.add(plank);
+
+      // Bullnose rounded edge trim along the foreground border of each plank
+      const bullnose = new THREE.Mesh(
+        new THREE.CylinderGeometry(plankH / 2, plankH / 2, plankW, 16),
+        mats.floor
+      );
+      bullnose.rotation.z = Math.PI / 2;
+      bullnose.rotation.y = Math.PI / 2;
+      bullnose.position.set(plankLen / 2, plankH / 2, zPos);
+      bullnose.receiveShadow = true;
+      roomGroup.add(bullnose);
+    }
+
+    // Left Wall with Cutout Window
+    const leftWallGroup = new THREE.Group();
+    const lLower = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, 2.05, ROOM_W), mats.wall);
+    lLower.position.set(-ROOM_W / 2 - WALL_THICK / 2, 1.025, 0);
+    lLower.receiveShadow = true; lLower.castShadow = true;
+
+    const lUpper = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, 1.35, ROOM_W), mats.wall);
+    lUpper.position.set(-ROOM_W / 2 - WALL_THICK / 2, ROOM_H - 0.675, 0);
+    lUpper.receiveShadow = true; lUpper.castShadow = true;
+
+    const lFront = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, 2.2, 1.6), mats.wall);
+    lFront.position.set(-ROOM_W / 2 - WALL_THICK / 2, 3.15, ROOM_W / 2 - 0.8);
+    lFront.receiveShadow = true; lFront.castShadow = true;
+
+    const lBack = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, 2.2, 2.1), mats.wall);
+    lBack.position.set(-ROOM_W / 2 - WALL_THICK / 2, 3.15, -ROOM_W / 2 + 1.05);
+    lBack.receiveShadow = true; lBack.castShadow = true;
+
+    leftWallGroup.add(lLower, lUpper, lFront, lBack);
+    roomGroup.add(leftWallGroup);
+
+    // Back-Right Wall
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W + WALL_THICK, ROOM_H, WALL_THICK), mats.wall);
+    backWall.position.set(-WALL_THICK / 2, ROOM_H / 2, -ROOM_W / 2 - WALL_THICK / 2);
+    backWall.receiveShadow = true; backWall.castShadow = true;
+    roomGroup.add(backWall);
+
+    // Chunky rounded wood coping on top edges (signature feature of the reference image)
+    const capThickness = 0.58;
+    const capHeight = 0.36;
+    const lCap = new THREE.Mesh(new THREE.BoxGeometry(capThickness, capHeight, ROOM_W + WALL_THICK * 2 + 0.12), mats.wallCoping);
+    lCap.position.set(-ROOM_W / 2 - WALL_THICK / 2, ROOM_H + capHeight / 2, 0);
+    lCap.castShadow = true;
+
+    const bCap = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W + capThickness + 0.22, capHeight, capThickness), mats.wallCoping);
+    bCap.position.set(0, ROOM_H + capHeight / 2, -ROOM_W / 2 - WALL_THICK / 2);
+    bCap.castShadow = true;
+    roomGroup.add(lCap, bCap);
+
+    const windowFrameOuter = new THREE.Group();
+    const wSill = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK + 0.2, 0.14, 3.86), mats.wallCoping);
+    wSill.position.set(-ROOM_W / 2 - WALL_THICK / 2, 2.05, -0.42);
+    const wTop = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK + 0.2, 0.14, 3.86), mats.wallCoping);
+    wTop.position.set(-ROOM_W / 2 - WALL_THICK / 2, 4.25, -0.42);
+    const wSideL = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK + 0.2, 2.1, 0.14), mats.wallCoping);
+    wSideL.position.set(-ROOM_W / 2 - WALL_THICK / 2, 3.15, -2.28);
+    const wSideR = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK + 0.2, 2.1, 0.14), mats.wallCoping);
+    wSideR.position.set(-ROOM_W / 2 - WALL_THICK / 2, 3.15, 1.44);
+    windowFrameOuter.add(wSill, wTop, wSideL, wSideR);
+    roomGroup.add(windowFrameOuter);
+
+    // Awning-style outward-tilting upper window sash
+    const windowHingePivot = new THREE.Group();
+    windowHingePivot.position.set(-ROOM_W / 2 - WALL_THICK / 2, 4.2, -0.42);
+
+    const sashThickness = 0.09;
+    const sashW = 3.65;
+    const sashH = 2.05;
+    const sashMesh = new THREE.Mesh(new THREE.BoxGeometry(sashThickness, sashH, sashW), mats.wallCoping);
+    sashMesh.position.set(0, -sashH / 2, 0);
+    sashMesh.castShadow = true;
+
+    const glassPane = new THREE.Mesh(new THREE.BoxGeometry(0.02, sashH - 0.2, sashW - 0.2), mats.glass);
+    glassPane.position.set(0, -sashH / 2, 0);
+
+    // Thin metallic stay-rod holding window open
+    const stayRod = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 1.25), mats.brass);
+    stayRod.rotation.z = Math.PI / 4.2;
+    stayRod.position.set(-0.45, -sashH * 0.72, 0);
+
+    windowHingePivot.add(sashMesh, glassPane, stayRod);
+    windowHingePivot.rotation.z = 0.52; // Outward tilt angle as in reference
+    roomGroup.add(windowHingePivot);
+
+    // Left wall picture frames
+    function createWallFrame(w, h, x, y, z) {
+      const g = new THREE.Group();
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.06, h, w), mats.wallCoping);
+      const inner = new THREE.Mesh(new THREE.BoxGeometry(0.07, h - 0.12, w - 0.12), mats.cabinet);
+      g.add(frame, inner);
+      g.position.set(x, y, z);
+      g.castShadow = true;
+      return g;
+    }
+    const f1 = createWallFrame(0.46, 0.58, -ROOM_W / 2 + 0.03, 3.25, 2.45);
+    const f2 = createWallFrame(0.46, 0.58, -ROOM_W / 2 + 0.03, 2.45, 2.45);
+    roomGroup.add(f1, f2);
+
+    const fridgeGroup = new THREE.Group();
+    const fW = 1.62;
+    const fH = 3.65;
+    const fD = 1.48;
+
+    const fBody = new THREE.Mesh(new THREE.BoxGeometry(fW, fH, fD), mats.mintAppliance);
+    fBody.position.set(0, fH / 2, 0);
+    fBody.castShadow = true; fBody.receiveShadow = true;
+    fridgeGroup.add(fBody);
+
+    // Seam line separating upper fridge & lower freezer doors
+    const fSeam = new THREE.Mesh(new THREE.BoxGeometry(fW + 0.02, 0.045, fD + 0.02), mats.mintDark);
+    fSeam.position.set(0, fH * 0.43, 0);
+    fridgeGroup.add(fSeam);
+
+    // Retro horizontal chrome handles
+    const fHandle1 = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.04, 0.07), mats.chrome);
+    fHandle1.position.set(0.46, fH * 0.49, fD / 2 + 0.04);
+    const fHandle2 = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.04, 0.07), mats.chrome);
+    fHandle2.position.set(0.46, fH * 0.37, fD / 2 + 0.04);
+    fridgeGroup.add(fHandle1, fHandle2);
+
+    fridgeGroup.position.set(-ROOM_W / 2 + fW / 2 + 0.22, 0, -ROOM_W / 2 + fD / 2 + 0.22);
+    roomGroup.add(fridgeGroup);
+
+    // Wooden produce crate on top of fridge
+    const crateGroup = new THREE.Group();
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0xbd693c, roughness: 0.78 });
+    const crateMesh = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.52, 0.95), crateMat);
+    crateMesh.position.set(0, 0.26, 0);
+    crateMesh.castShadow = true;
+    crateGroup.add(crateMesh);
+
+    // Crusty baguettes sticking out diagonally
+    function createBaguette(len, radius) {
+      const geo = new THREE.CylinderGeometry(radius * 0.85, radius, len, 14);
+      const b = new THREE.Mesh(geo, mats.bread);
+      b.castShadow = true;
+      return b;
+    }
+    const b1 = createBaguette(1.35, 0.125);
+    b1.rotation.set(-0.35, 0.2, 0.62);
+    b1.position.set(-0.16, 0.76, -0.05);
+    const b2 = createBaguette(1.45, 0.13);
+    b2.rotation.set(-0.25, -0.1, 0.48);
+    b2.position.set(0.12, 0.8, 0.1);
+    crateGroup.add(b1, b2);
+
+    crateGroup.position.set(fridgeGroup.position.x, fH, fridgeGroup.position.z);
+    roomGroup.add(crateGroup);
+
+    const counterGroup = new THREE.Group();
+    const cW = 3.3;
+    const cH = 1.95;
+    const cD = 1.5;
+
+    // 台面（留出水槽开口）
+    const cTopMat = mats.countertop;
+    const topY = cH, topH = 0.12;
+    // 左段（水槽左边）
+    const leftW = (-0.76 - 1.38 / 2) - (-cW / 2);
+    const leftX = -cW / 2 + leftW / 2;
+    const cLeft = new THREE.Mesh(new THREE.BoxGeometry(leftW, topH, cD), cTopMat);
+    cLeft.position.set(leftX, topY, 0); cLeft.castShadow = true; cLeft.receiveShadow = true;
+    counterGroup.add(cLeft);
+    // 右段（水槽右边）
+    const rightW = (cW / 2) - (-0.76 + 1.38 / 2);
+    const rightX = cW / 2 - rightW / 2;
+    const cRight = new THREE.Mesh(new THREE.BoxGeometry(rightW, topH, cD), cTopMat);
+    cRight.position.set(rightX, topY, 0); cRight.castShadow = true; cRight.receiveShadow = true;
+    counterGroup.add(cRight);
+    // 前段（水槽前面）
+    const frontD = (0.08 - 1.08 / 2) - (-cD / 2);
+    const frontZ = -cD / 2 + frontD / 2;
+    const cFront = new THREE.Mesh(new THREE.BoxGeometry(1.38, topH, frontD), cTopMat);
+    cFront.position.set(-0.76, topY, frontZ); cFront.castShadow = true; cFront.receiveShadow = true;
+    counterGroup.add(cFront);
+    // 后段（水槽后面）
+    const backD = (cD / 2) - (0.08 + 1.08 / 2);
+    const backZ = cD / 2 - backD / 2;
+    const cBack = new THREE.Mesh(new THREE.BoxGeometry(1.38, topH, backD), cTopMat);
+    cBack.position.set(-0.76, topY, backZ); cBack.castShadow = true; cBack.receiveShadow = true;
+    counterGroup.add(cBack);
+
+    // Cream white cabinet base —— 必须空心，否则实心柜体会把水槽盆胆整个包住看不见
+    const cW2 = cW - 0.05, cD2 = cD - 0.08, cH2 = cH - 0.06, pT = 0.1;
+    const mkPanel = (w, h, d, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats.cabinet);
+      m.position.set(x, y, z);
+      m.castShadow = true; m.receiveShadow = true;
+      counterGroup.add(m);
+      return m;
+    };
+    mkPanel(cW2, pT, cD2, 0, pT / 2, -0.02);                                  // 底板
+    mkPanel(cW2, cH2, pT, 0, cH2 / 2, -0.02 - cD2 / 2 + pT / 2);               // 后板
+    mkPanel(pT, cH2, cD2, -cW2 / 2 + pT / 2, cH2 / 2, -0.02);                  // 左侧板
+    mkPanel(pT, cH2, cD2, cW2 / 2 - pT / 2, cH2 / 2, -0.02);                   // 右侧板
+    // 正面只在右段做门板，左段（水槽下方）留空，盆胆才看得见
+    mkPanel(cW2 * 0.34, cH2, pT, cW2 * 0.33, cH2 / 2, -0.02 + cD2 / 2 - pT / 2);
+
+    // 水槽：外框 + 凹陷盆胆
+    const sinkW = 1.38, sinkD = 1.08;
+    const yTop = cH + topH / 2;      // 台面上表面
+    const rimH = 0.07;               // 陶瓷边框厚度
+    const basinDepth = 0.36;         // 盆胆深度
+    const wallT = 0.08;              // 盆壁厚度
+    const sinkX = -0.76, sinkZ = 0.08;
+
+    // 陶瓷边框（四条，围出台面开口）
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0xfbfaf8, roughness: 0.22, metalness: 0.04 });
+    const mkRim = (w, d, x, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, rimH, d), rimMat);
+      m.position.set(x, yTop - rimH / 2, z);
+      m.castShadow = true; m.receiveShadow = true;
+      counterGroup.add(m);
+    };
+    mkRim(sinkW, wallT, sinkX, sinkZ - sinkD / 2 + wallT / 2);
+    mkRim(sinkW, wallT, sinkX, sinkZ + sinkD / 2 - wallT / 2);
+    mkRim(wallT, sinkD - wallT * 2, sinkX - sinkW / 2 + wallT / 2, sinkZ);
+    mkRim(wallT, sinkD - wallT * 2, sinkX + sinkW / 2 - wallT / 2, sinkZ);
+
+    // 盆胆内壁：竖向渐变贴图（口沿亮 → 盆底暗），不用 AO 也能看出凹陷
+    const iw = sinkW - wallT * 2, id = sinkD - wallT * 2;
+    const basinGradTex = (function () {
+      const cv = document.createElement('canvas');
+      cv.width = 8; cv.height = 256;
+      const g = cv.getContext('2d');
+      const grd = g.createLinearGradient(0, 0, 0, 256);
+      grd.addColorStop(0.00, '#fbf9f5');
+      grd.addColorStop(0.30, '#ddd7ce');
+      grd.addColorStop(0.70, '#9d968c');
+      grd.addColorStop(1.00, '#6b655d');
+      g.fillStyle = grd; g.fillRect(0, 0, 8, 256);
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const innerMat = new THREE.MeshStandardMaterial({ map: basinGradTex, roughness: 0.3, metalness: 0.04 });
+    const mkWall = (w, d, x, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, basinDepth, d), innerMat);
+      m.position.set(x, yTop - rimH - basinDepth / 2, z);
+      m.receiveShadow = true;
+      counterGroup.add(m);
+    };
+    mkWall(iw, 0.02, sinkX, sinkZ - id / 2 + 0.01);
+    mkWall(iw, 0.02, sinkX, sinkZ + id / 2 - 0.01);
+    mkWall(0.02, id, sinkX - iw / 2 + 0.01, sinkZ);
+    mkWall(0.02, id, sinkX + iw / 2 - 0.01, sinkZ);
+
+    // 盆底：明显压暗，一眼看出是凹下去的
+    const basinBottom = new THREE.Mesh(
+      new THREE.BoxGeometry(iw, 0.03, id),
+      new THREE.MeshStandardMaterial({ color: 0x5f5952, roughness: 0.6, metalness: 0.02 })
+    );
+    basinBottom.position.set(sinkX, yTop - rimH - basinDepth + 0.015, sinkZ);
+    basinBottom.receiveShadow = true;
+    counterGroup.add(basinBottom);
+
+    // 排水孔
+    const drain = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.012, 16),
+      mats.chrome
+    );
+    drain.position.set(sinkX, yTop - rimH - basinDepth + 0.032, sinkZ);
+    counterGroup.add(drain);
+
+    // Gooseneck curved chrome retro faucet
+    const faucetGroup = new THREE.Group();
+    const faucetCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0.58, 0),
+      new THREE.Vector3(0.08, 0.74, 0),
+      new THREE.Vector3(0.24, 0.66, 0),
+      new THREE.Vector3(0.28, 0.54, 0)
+    ]);
+    const faucetMesh = new THREE.Mesh(new THREE.TubeGeometry(faucetCurve, 24, 0.038, 12, false), mats.chrome);
+    faucetGroup.add(faucetMesh);
+
+    const fLever = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.08), mats.chrome);
+    fLever.rotation.x = Math.PI / 2;
+    fLever.position.set(-0.08, 0.16, 0);
+    faucetGroup.add(fLever);
+    faucetGroup.rotation.y = Math.PI;
+    faucetGroup.position.set(-0.76, cH + 0.06, -0.46);
+    counterGroup.add(faucetGroup);
+
+    // Lower open shelf with woven vegetable crate & pumpkins/potatoes
+    const openCut = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.88, cD), new THREE.MeshStandardMaterial({ color: 0xeae5dc, roughness: 0.8 }));
+    openCut.position.set(0.85, 0.62, 0.04);
+    counterGroup.add(openCut);
+
+    const vegCrate = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.36, 0.72), new THREE.MeshStandardMaterial({ color: 0xc87c49, roughness: 0.82 }));
+    vegCrate.position.set(0.85, 0.34, 0.04);
+    vegCrate.castShadow = true;
+    counterGroup.add(vegCrate);
+
+    const pumpkinMat = new THREE.MeshStandardMaterial({ color: 0xf57920, roughness: 0.65 });
+    for (let pi = 0; pi < 4; pi++) {
+      const pumpkin = new THREE.Mesh(new THREE.SphereGeometry(0.105, 10, 10), pumpkinMat);
+      pumpkin.scale.set(1.15, 0.85, 1.15);
+      pumpkin.position.set(0.72 + (pi % 2) * 0.24, 0.46, -0.08 + Math.floor(pi / 2) * 0.24);
+      counterGroup.add(pumpkin);
+    }
+
+    // Cutting board with loaf & knife
+    const cBoard = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.05, 0.98), mats.countertopDark);
+    cBoard.position.set(0.85, cH + 0.08, 0.12);
+    cBoard.castShadow = true;
+    const loaf = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 12), mats.bread);
+    loaf.scale.set(1.4, 0.72, 0.9);
+    loaf.position.set(0.85, cH + 0.2, 0.12);
+    loaf.castShadow = true;
+    counterGroup.add(cBoard, loaf);
+
+    // Spice jars on corner
+    for (let j = 0; j < 2; j++) {
+      const jar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.22, 12), mats.ceramic);
+      const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.06, 12), mats.wallCoping);
+      lid.position.y = 0.14;
+      jar.add(lid);
+      jar.position.set(1.36 + j * 0.2, cH + 0.16, -0.4);
+      counterGroup.add(jar);
+    }
+
+    counterGroup.position.set(0.65, 0, -ROOM_W / 2 + cD / 2 + 0.22);
+    roomGroup.add(counterGroup);
+
+    const ovenGroup = new THREE.Group();
+    const oW = 1.62;
+    const oH = 2.0;
+    const oD = 1.5;
+
+    const ovenBody = new THREE.Mesh(new THREE.BoxGeometry(oW, oH, oD), mats.mintAppliance);
+    ovenBody.position.set(0, oH / 2, 0);
+    ovenBody.castShadow = true; ovenBody.receiveShadow = true;
+    ovenGroup.add(ovenBody);
+
+    // Glowing warm glass oven window
+    const ovenWindow = new THREE.Mesh(new THREE.BoxGeometry(oW * 0.74, oH * 0.38, 0.06), new THREE.MeshStandardMaterial({
+      color: 0xffedd9,
+      roughness: 0.12,
+      emissive: PALETTE.ovenWarmGlow,
+      emissiveIntensity: 0.7
+    }));
+    ovenWindow.position.set(0, oH * 0.36, oD / 2 + 0.02);
+    ovenGroup.add(ovenWindow);
+
+    // Baking cookies on wire rack inside
+    for (let ci = 0; ci < 3; ci++) {
+      const cookie = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.03, 10), mats.bread);
+      cookie.position.set(-0.25 + ci * 0.25, oH * 0.35, oD / 2);
+      ovenGroup.add(cookie);
+    }
+
+    // Chrome control knobs
+    for (let k = 0; k < 4; k++) {
+      const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.05, 12), mats.chrome);
+      knob.rotation.x = Math.PI / 2;
+      knob.position.set(-0.46 + k * 0.31, oH * 0.72, oD / 2 + 0.02);
+      ovenGroup.add(knob);
+    }
+
+    // Top range cooking burners
+    for (let bx = 0; bx < 2; bx++) {
+      for (let bz = 0; bz < 2; bz++) {
+        const burner = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.026, 8, 20), new THREE.MeshStandardMaterial({ color: 0x3e3c38, roughness: 0.7 }));
+        burner.rotation.x = Math.PI / 2;
+        burner.position.set(-0.36 + bx * 0.72, oH + 0.02, -0.3 + bz * 0.65);
+        ovenGroup.add(burner);
+      }
+    }
+
+    // Cute mint kettle boiling on cooktop
+    const kettle = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, 0.34, 16), mats.mintDark);
+    kettle.position.set(-0.36, oH + 0.2, -0.3);
+    const kettleLid = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), mats.chrome);
+    kettleLid.position.set(0, 0.18, 0);
+    kettle.add(kettleLid);
+    kettle.castShadow = true;
+    ovenGroup.add(kettle);
+
+    ovenGroup.position.set(ROOM_W / 2 - oW / 2 - 0.25, 0, -ROOM_W / 2 + oD / 2 + 0.22);
+    roomGroup.add(ovenGroup);
+
+    const islandGroup = new THREE.Group();
+    const iW = 3.95;
+    const iH = 2.15;
+    const iD = 1.48;
+
+    // Solid caramel wood island top
+    const iTop = new THREE.Mesh(new THREE.BoxGeometry(iW, 0.14, iD), mats.countertop);
+    iTop.position.set(0, iH, 0);
+    iTop.castShadow = true; iTop.receiveShadow = true;
+    islandGroup.add(iTop);
+
+    // Cream white paneled island base
+    const iBase = new THREE.Mesh(new THREE.BoxGeometry(iW - 0.3, iH - 0.08, iD - 0.26), mats.cabinet);
+    iBase.position.set(-0.06, (iH - 0.08) / 2, -0.06);
+    iBase.castShadow = true; iBase.receiveShadow = true;
+    islandGroup.add(iBase);
+
+    // Recessed wainscot panel moldings on the front
+    for (let p = 0; p < 4; p++) {
+      const panelTrim = new THREE.Mesh(new THREE.BoxGeometry(0.68, 1.25, 0.04), new THREE.MeshStandardMaterial({ color: 0xece6dd, roughness: 0.65 }));
+      panelTrim.position.set(-1.26 + p * 0.81, 1.05, iD / 2 - 0.17);
+      panelTrim.castShadow = true;
+      islandGroup.add(panelTrim);
+    }
+
+    // Party treats and beverage accessories on the island
+    function createCup(col, x, z) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.2, 14), new THREE.MeshStandardMaterial({ color: col, roughness: 0.3 }));
+      cup.position.set(x, iH + 0.16, z);
+      cup.castShadow = true;
+      const coffee = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 12), new THREE.MeshStandardMaterial({ color: 0x482d1c, roughness: 0.2 }));
+      coffee.position.set(x, iH + 0.24, z);
+      islandGroup.add(cup, coffee);
+    }
+    createCup(0xffffff, -1.35, 0.1);
+    createCup(0xffffff, 0.35, 0.15);
+
+    function createPlateWithPastry(x, z, type) {
+      const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.25, 0.035, 20), mats.ceramic);
+      plate.position.set(x, iH + 0.08, z);
+      plate.receiveShadow = true;
+      islandGroup.add(plate);
+
+      if (type === 'pastry') {
+        const cake = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.16, 0.14, 14), mats.bread);
+        cake.position.set(x, iH + 0.16, z);
+        cake.castShadow = true;
+        const cream = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), mats.ceramic);
+        cream.position.set(x, iH + 0.26, z);
+        islandGroup.add(cake, cream);
+      } else if (type === 'donut') {
+        const donut = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.06, 10, 16), mats.bread);
+        donut.rotation.x = Math.PI / 2;
+        donut.position.set(x, iH + 0.14, z);
+        donut.castShadow = true;
+        islandGroup.add(donut);
+      } else if (type === 'cookies') {
+        for (let c = 0; c < 3; c++) {
+          const ck = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.04, 12), new THREE.MeshStandardMaterial({ color: 0x824e27, roughness: 0.9 }));
+          ck.position.set(x + (c - 1) * 0.1, iH + 0.12, z + (c % 2) * 0.08);
+          ck.castShadow = true;
+          islandGroup.add(ck);
+        }
+      }
+    }
+    createPlateWithPastry(-0.85, 0.05, 'pastry');
+    createPlateWithPastry(-0.15, -0.15, 'donut');
+    createPlateWithPastry(0.4, -0.12, 'cookies');
+    createPlateWithPastry(0.95, 0.15, 'pastry');
+
+    // Pitcher / mint teapot & delicate tulip vase
+    const islandPitcher = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.38, 14), mats.mintDark);
+    islandPitcher.position.set(1.42, iH + 0.24, 0.12);
+    islandPitcher.castShadow = true;
+    islandGroup.add(islandPitcher);
+
+    const slimVase = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.32, 12), mats.ceramic);
+    slimVase.position.set(-1.62, iH + 0.22, -0.28);
+    const flowerStem = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.3), mats.wallCoping);
+    flowerStem.position.set(-1.62, iH + 0.42, -0.28);
+    const tulip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), new THREE.MeshStandardMaterial({ color: 0xe86678, roughness: 0.6 }));
+    tulip.scale.set(0.8, 1.3, 0.8);
+    tulip.position.set(-1.62, iH + 0.56, -0.28);
+    islandGroup.add(slimVase, flowerStem, tulip);
+
+    // ===== 椅子：GLB 素材替换原来的程序化圆凳 =====
+    // 先留一份程序化圆凳做兜底，GLB 加载失败时自动回退，场景不会出现空位。
+    function createStool(x, z) {
+      const stool = new THREE.Group();
+      const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.43, 0.09, 24), mats.countertop);
+      seat.position.y = 1.35;
+      seat.castShadow = true; seat.receiveShadow = true;
+      stool.add(seat);
+
+      const footRing = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.025, 8, 18), mats.wallCoping);
+      footRing.rotation.x = Math.PI / 2;
+      footRing.position.y = 0.55;
+      footRing.castShadow = true;
+      stool.add(footRing);
+
+      const legMat = mats.wallCoping;
+      const legGeo = new THREE.CylinderGeometry(0.035, 0.045, 1.35, 10);
+      for (let li = 0; li < 4; li++) {
+        const ang = (li * Math.PI) / 2 + Math.PI / 4;
+        const leg = new THREE.Mesh(legGeo, legMat);
+        leg.position.set(Math.cos(ang) * 0.28, 0.68, Math.sin(ang) * 0.28);
+        leg.rotation.z = Math.cos(ang) * -0.12;
+        leg.rotation.x = Math.sin(ang) * 0.12;
+        leg.castShadow = true;
+        stool.add(leg);
+      }
+      stool.position.set(x, 0, z);
+      return stool;
+    }
+
+    // ===== 画风统一 =====
+    // 场景里其他东西（柜体 / 台面 / 地面 / 冰箱）全是 PALETTE 里的纯色哑光，
+    // 一张贴图都没有。照片扫描椅子哪怕"去色相 + 染调色板"，表面那层高频噪点
+    // 仍然和旁边的干净色块对不上。
+    // 现在的做法：GLB 在离线阶段已经减面并剥掉全部贴图，运行时直接给纯色哑光
+    // 材质，参数和 mats.cabinet / mats.countertop 一致 —— 只保留雕塑造型。
+    // 想要原始照片风，把 chair1.glb / chair2.glb 换回未优化的原素材即可。
+
+    // ry = 绕 Y 轴朝向（弧度）。朝向不对就改这两个数：0 / 1.57 / 3.14 / -1.57
+    // h   = 归一化后的整体高度（场景单位）。台面高 2.15，这里按吧台椅比例取 1.78，
+    //       座面落在 1.1 上下，配 2.15 的台面才像"坐下来吃饭"而不是"俯视它"。
+    // tint = 纯色陶土色，取自上方 PALETTE
+    const chairLoader = new THREE.GLTFLoader();
+    const CHAIR_SEAT_H = 1.78;
+    const CHAIR_ROUGHNESS = 0.78;
+    const chairConfigs = [
+      { url: 'chair1.glb', x: -1.05, z: iD / 2 + 0.5, ry: Math.PI, h: CHAIR_SEAT_H, tint: PALETTE.sageMint },
+      { url: 'chair2.glb', x: 0.5,   z: iD / 2 + 0.5, ry: Math.PI, h: CHAIR_SEAT_H, tint: PALETTE.toffeeWoodDark }
+    ];
+
+    function addChairModel(gltf, cfg) {
+      const holder = new THREE.Group();
+      const model = gltf.scene;
+      holder.add(model);
+
+      // 1) 先把模型原点挪到自身包围盒中心，这样等比缩放后不会朝一个方向偏移
+      const raw = new THREE.Box3().setFromObject(model);
+      const center = raw.getCenter(new THREE.Vector3());
+      model.position.set(-center.x, -center.y, -center.z);
+
+      // 2) 等比缩放到目标高度
+      const size = raw.getSize(new THREE.Vector3());
+      const k = cfg.h / Math.max(size.y, 0.0001);
+      model.scale.setScalar(k);
+
+      // 3) 抬高半个身位，让椅脚正好落在地面 y=0（而不是一半插进地里）
+      holder.position.set(cfg.x, cfg.h / 2, cfg.z);
+      holder.rotation.y = cfg.ry;
+      holder.traverse(function (o) {
+        if (!o.isMesh) return;
+        o.castShadow = true;
+        o.receiveShadow = true;
+        o.material = new THREE.MeshStandardMaterial({
+          color: cfg.tint,
+          roughness: CHAIR_ROUGHNESS,
+          metalness: 0
+        });
+      });
+      islandGroup.add(holder);
+    }
+
+    // 注意：r128 的 GLTFLoader.load() 不返回 Promise，成功/失败都在回调里计数。
+    let chairDone = 0;
+    function chairSettled() {
+      chairDone++;
+      if (chairDone === chairConfigs.length) showNotification('两把椅子都归位啦 🪑');
+    }
+    chairConfigs.forEach(function (cfg) {
+      chairLoader.load(
+        cfg.url,
+        function (gltf) {
+          try {
+            addChairModel(gltf, cfg);
+          } catch (e) {
+            console.warn('椅子摆放出错，回退圆凳：' + cfg.url, e);
+            islandGroup.add(createStool(cfg.x, cfg.z));
+          }
+          chairSettled();
+        },
+        function (ev) {
+          if (ev && ev.total) {
+            const pct = Math.round((ev.loaded / ev.total) * 100);
+            showNotification('正在搬椅子… ' + pct + '%');
+          }
+        },
+        function (error) {
+          // 素材缺失/解码失败时退回圆凳，场景不至于缺一块
+          console.warn('椅子素材加载失败，回退圆凳：' + cfg.url, error);
+          islandGroup.add(createStool(cfg.x, cfg.z));
+          chairSettled();
+        }
+      );
+    });
+
+    // Kraft paper bag with baguettes on floor
+    const bagGroup = new THREE.Group();
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.65, 0.45), new THREE.MeshStandardMaterial({ color: 0xc49b6f, roughness: 0.9 }));
+    bag.position.y = 0.35;
+    bag.castShadow = true;
+    const bBaguette1 = createBaguette(1.0, 0.09);
+    bBaguette1.rotation.set(0.25, 0.15, -0.2);
+    bBaguette1.position.set(-0.06, 0.72, 0);
+    const bBaguette2 = createBaguette(0.9, 0.085);
+    bBaguette2.rotation.set(-0.2, 0.1, 0.25);
+    bBaguette2.position.set(0.08, 0.68, 0);
+    bagGroup.add(bag, bBaguette1, bBaguette2);
+    bagGroup.position.set(iW / 2 + 0.35, 0, 0.25);
+    islandGroup.add(bagGroup);
+
+    islandGroup.position.set(-0.7, 0, 1.6);
+    roomGroup.add(islandGroup);
+
+    const wallDecorGroup = new THREE.Group();
+    const bWallZ = -ROOM_W / 2 + 0.16;
+
+    // Glowing fairy light garland draped across back wall
+    const garlandCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-1.8, 4.4, bWallZ),
+      new THREE.Vector3(-0.9, 4.1, bWallZ + 0.05),
+      new THREE.Vector3(0.0, 4.25, bWallZ + 0.04),
+      new THREE.Vector3(0.9, 3.95, bWallZ + 0.06),
+      new THREE.Vector3(1.8, 4.3, bWallZ)
+    ]);
+    const garlandWire = new THREE.Mesh(new THREE.TubeGeometry(garlandCurve, 32, 0.012, 6, false), mats.wall);
+    wallDecorGroup.add(garlandWire);
+
+    for (let bi = 0; bi <= 14; bi++) {
+      const pt = garlandCurve.getPoint(bi / 14);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), mats.fairyBulb);
+      bulb.position.copy(pt).add(new THREE.Vector3(0, -0.04, 0.02));
+      wallDecorGroup.add(bulb);
+    }
+
+    // Cubby pigeon-hole wood wall spice rack
+    const cubbyGroup = new THREE.Group();
+    const cubbyW = 1.35;
+    const cubbyH = 1.25;
+    const cubbyD = 0.45;
+    const cubbyFrame = new THREE.Mesh(new THREE.BoxGeometry(cubbyW, cubbyH, cubbyD), mats.wallCoping);
+    cubbyFrame.castShadow = true;
+    cubbyGroup.add(cubbyFrame);
+
+    const hole1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.52, cubbyD + 0.02), mats.wall);
+    hole1.position.set(-0.32, 0.28, 0);
+    const hole2 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.52, cubbyD + 0.02), mats.wall);
+    hole2.position.set(0.32, 0.28, 0);
+    const hole3 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.45, cubbyD + 0.02), mats.wall);
+    hole3.position.set(0, -0.32, 0);
+    cubbyGroup.add(hole1, hole2, hole3);
+
+    for (let pi = 0; pi < 3; pi++) {
+      const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 12), mats.ceramic);
+      pl.rotation.z = Math.PI / 2;
+      pl.position.set(-0.45 + pi * 0.08, -0.32, 0.05);
+      cubbyGroup.add(pl);
+    }
+    const tinyMug = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.14, 10), mats.bread);
+    tinyMug.position.set(0.32, 0.25, 0.05);
+    cubbyGroup.add(tinyMug);
+
+    cubbyGroup.position.set(0.9, 3.1, bWallZ + cubbyD / 2);
+    wallDecorGroup.add(cubbyGroup);
+
+    // Left floating shelf with trailing ivy
+    const shelf1 = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.08, 0.45), mats.wallCoping);
+    shelf1.position.set(-0.55, 3.45, bWallZ + 0.22);
+    shelf1.castShadow = true;
+    wallDecorGroup.add(shelf1);
+
+    const plantPot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.22, 12), mats.terracotta);
+    plantPot.position.set(-0.35, 3.6, bWallZ + 0.22);
+    wallDecorGroup.add(plantPot);
+
+    for (let li = 0; li < 7; li++) {
+      const vine = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshStandardMaterial({ color: PALETTE.plantGreenMid, roughness: 0.6 }));
+      vine.scale.set(1.4, 0.4, 1.2);
+      vine.position.set(-0.32 + Math.sin(li) * 0.12, 3.5 - li * 0.12, bWallZ + 0.38 + Math.cos(li) * 0.06);
+      wallDecorGroup.add(vine);
+    }
+
+    // Right floating shelf with bottles & utensil rail below
+    const shelf2 = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.08, 0.45), mats.wallCoping);
+    shelf2.position.set(2.35, 2.9, bWallZ + 0.22);
+    shelf2.castShadow = true;
+    wallDecorGroup.add(shelf2);
+
+    for (let s = 0; s < 4; s++) {
+      const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.2, 10), new THREE.MeshStandardMaterial({
+        color: [0xf2e2cf, 0xd4a574, 0xe07b53, 0x93b59d][s],
+        roughness: 0.4
+      }));
+      bottle.position.set(1.95 + s * 0.22, 3.05, bWallZ + 0.22);
+      wallDecorGroup.add(bottle);
+    }
+
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 1.1), mats.brass);
+    rail.rotation.z = Math.PI / 2;
+    rail.position.set(2.35, 2.65, bWallZ + 0.18);
+    wallDecorGroup.add(rail);
+
+    for (let u = 0; u < 3; u++) {
+      const utensil = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.38, 0.015), mats.wallCoping);
+      utensil.position.set(2.05 + u * 0.28, 2.45, bWallZ + 0.18);
+      utensil.castShadow = true;
+      wallDecorGroup.add(utensil);
+    }
+
+    // Wooden circular ring mirror & picture frame on right wall
+    const roundMirror = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 12, 24), mats.wallCoping);
+    roundMirror.position.set(2.45, 4.15, bWallZ + 0.04);
+    roundMirror.castShadow = true;
+    const mirrorGlass = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshStandardMaterial({ color: 0xebf2f5, roughness: 0.1, metalness: 0.5 }));
+    mirrorGlass.position.set(2.45, 4.15, bWallZ + 0.045);
+    wallDecorGroup.add(roundMirror, mirrorGlass);
+
+    const squareFrame = createWallFrame(0.5, 0.55, -0.1, 4.8, bWallZ + 0.03);
+    squareFrame.rotation.y = Math.PI / 2;
+    wallDecorGroup.add(squareFrame);
+
+    roomGroup.add(wallDecorGroup);
+
+    const plantGroup = new THREE.Group();
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.32, 0.72, 20), mats.terracotta);
+    pot.position.y = 0.36;
+    pot.castShadow = true; pot.receiveShadow = true;
+
+    const potRim = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.16, 20), mats.terracotta);
+    potRim.position.y = 0.68;
+    potRim.castShadow = true;
+    plantGroup.add(pot, potRim);
+
+    const soil = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 18), new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.9 }));
+    soil.position.y = 0.68;
+    plantGroup.add(soil);
+
+    // Multi-leaf upright Snake Plant (Sansevieria)
+    const leafGeo = new THREE.ConeGeometry(0.12, 1.9, 5);
+    const leafMatDark = new THREE.MeshStandardMaterial({ color: PALETTE.plantGreenDark, roughness: 0.5 });
+    const leafMatLight = new THREE.MeshStandardMaterial({ color: PALETTE.plantGreenMid, roughness: 0.5 });
+
+    const snakeLeaves = [
+      { h: 2.15, x: 0.0, z: 0.0, ry: 0.1, rz: 0.04 },
+      { h: 1.88, x: 0.12, z: 0.08, ry: 0.5, rz: -0.06 },
+      { h: 1.98, x: -0.14, z: 0.05, ry: -0.4, rz: 0.08 },
+      { h: 1.62, x: 0.06, z: -0.12, ry: 1.2, rz: 0.05 },
+      { h: 1.48, x: -0.1, z: -0.1, ry: -1.0, rz: -0.07 }
+    ];
+
+    snakeLeaves.forEach((lp, idx) => {
+      const leaf = new THREE.Mesh(leafGeo, idx % 2 === 0 ? leafMatDark : leafMatLight);
+      leaf.scale.set(1.4, lp.h / 1.9, 0.35);
+      leaf.position.set(lp.x, 0.7 + lp.h / 2, lp.z);
+      leaf.rotation.y = lp.ry;
+      leaf.rotation.z = lp.rz;
+      leaf.castShadow = true;
+      plantGroup.add(leaf);
+    });
+
+    plantGroup.position.set(-ROOM_W / 2 + 0.7, 0, ROOM_W / 2 - 0.7);
+    roomGroup.add(plantGroup);
+
+    const waterParticles = [];
+    const waterMat = new THREE.MeshBasicMaterial({ color: 0x9ed3ed, transparent: true, opacity: 0.7 });
+    const waterGeo = new THREE.SphereGeometry(0.025, 6, 6);
+    let isFaucetRunning = false;
+
+    function spawnWaterDrop() {
+      if (!isFaucetRunning) return;
+      const drop = new THREE.Mesh(waterGeo, waterMat);
+      // Faucet nozzle position in world space
+      drop.position.set(0.65 - 0.76 + 0.28, 1.95 + 0.56, -ROOM_W / 2 + 1.5 / 2 + 0.22 - 0.46);
+      drop.userData = { vy: -0.04 - Math.random() * 0.02 };
+      scene.add(drop);
+      waterParticles.push(drop);
+    }
+
+    let isWindowOpen = true;
+    let isOvenLit = true;
+    let isDaylight = true;
+
+    const toast = document.getElementById('interactive-toast');
+    let toastTimer;
+    function showNotification(txt) {
+      toast.textContent = txt;
+      toast.style.opacity = '1';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 2200);
+    }
+
+    function toggleWindowAwning() {
+      isWindowOpen = !isWindowOpen;
+      const targetAngle = isWindowOpen ? 0.52 : 0.02;
+      new TWEEN.Tween(windowHingePivot.rotation)
+        .to({ z: targetAngle }, 650)
+        .easing(TWEEN.Easing.Back.Out)
+        .start();
+      showNotification(isWindowOpen ? '已推开百叶木窗通风 🪟' : '已合上木质窗户');
+    }
+
+    function toggleOvenGlow() {
+      isOvenLit = !isOvenLit;
+      new TWEEN.Tween(ovenLight)
+        .to({ intensity: isOvenLit ? 1.25 : 0.05 }, 400)
+        .start();
+      new TWEEN.Tween(ovenWindow.material)
+        .to({ emissiveIntensity: isOvenLit ? 0.7 : 0.05 }, 400)
+        .start();
+      showNotification(isOvenLit ? '已点亮烤箱，烤曲奇香气四溢 🍪' : '已关闭烤箱炉火');
+    }
+
+    function toggleFaucetWater() {
+      isFaucetRunning = !isFaucetRunning;
+      showNotification(isFaucetRunning ? '水龙头哗啦啦流水 💧' : '水龙头已关闭');
+    }
+
+    function toggleLightingMood() {
+      isDaylight = !isDaylight;
+      const icon = document.getElementById('mood-icon');
+      const text = document.getElementById('mood-text');
+
+      if (isDaylight) {
+        icon.textContent = '☀️';
+        text.textContent = '暖阳午后';
+        new TWEEN.Tween(scene.background)
+          .to({ r: 0.745, g: 0.718, b: 0.671 }, 800)
+          .start();
+        new TWEEN.Tween(sunLight)
+          .to({ intensity: 1.48 }, 800)
+          .start();
+        new TWEEN.Tween(hemiLight)
+          .to({ intensity: 0.85 }, 800)
+          .start();
+        showNotification('已切换：暖阳午后模式');
+      } else {
+        icon.textContent = '🌙';
+        text.textContent = '暖黄夜景';
+        new TWEEN.Tween(scene.background)
+          .to({ r: 0.24, g: 0.23, b: 0.25 }, 800)
+          .start();
+        new TWEEN.Tween(sunLight)
+          .to({ intensity: 0.38 }, 800)
+          .start();
+        new TWEEN.Tween(hemiLight)
+          .to({ intensity: 0.32 }, 800)
+          .start();
+        showNotification('已切换：温馨暖黄夜景');
+      }
+    }
+
+    function resetCameraView() {
+      new TWEEN.Tween(camera.position)
+        .to({ x: defaultCamPos.x, y: defaultCamPos.y, z: defaultCamPos.z }, 800)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+      new TWEEN.Tween(controls.target)
+        .to({ x: defaultLookAt.x, y: defaultLookAt.y, z: defaultLookAt.z }, 800)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+      // 漏了 zoom 的话，"重置视角"之后画面还缩在原处，看着像没生效
+      new TWEEN.Tween(camera)
+        .to({ zoom: 1 }, 800)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .onUpdate(function () { camera.updateProjectionMatrix(); })
+        .start();
+      showNotification('等距视角已重置');
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let downTime = 0;
+
+    canvas.addEventListener('pointerdown', () => { downTime = Date.now(); });
+    canvas.addEventListener('pointerup', (e) => {
+      // Ignore long drags/rotations
+      if (Date.now() - downTime > 260) return;
+
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      const hits = raycaster.intersectObjects(roomGroup.children, true);
+      if (hits.length > 0) {
+        let obj = hits[0].object;
+        let isOven = false, isFridge = false, isWindow = false, isIsland = false;
+
+        while (obj) {
+          if (obj === ovenGroup) isOven = true;
+          if (obj === fridgeGroup || obj === crateGroup) isFridge = true;
+          if (obj === windowHingePivot || obj === windowFrameOuter) isWindow = true;
+          if (obj === islandGroup) isIsland = true;
+          obj = obj.parent;
+        }
+
+        if (isOven) {
+          toggleOvenGlow();
+          window.parent.postMessage({ type:'home-furniture-clicked', room:'smallkitchen', fid:'fur-small-oven' }, '*');
+        } else if (isWindow) {
+          toggleWindowAwning();
+        } else if (isFridge) {
+          new TWEEN.Tween(fridgeGroup.rotation)
+            .to({ y: 0.07 }, 90)
+            .yoyo(true).repeat(3)
+            .easing(TWEEN.Easing.Quadratic.InOut)
+            .start();
+          showNotification('冰箱储藏着新鲜蔬果与香浓牛奶 🥛');
+          window.parent.postMessage({ type:'home-furniture-clicked', room:'smallkitchen', fid:'fur-small-fridge' }, '*');
+        } else if (isIsland) {
+          showNotification('一口香脆可颂配上一杯热拿铁 🥐');
+          window.parent.postMessage({ type:'home-furniture-clicked', room:'smallkitchen', fid:'fur-small-island' }, '*');
+        }
+      }
+    });
+
+    // Wire HUD Action Buttons
+    document.getElementById('btn-mood').addEventListener('click', toggleLightingMood);
+    document.getElementById('btn-faucet').addEventListener('click', toggleFaucetWater);
+    document.getElementById('btn-window').addEventListener('click', toggleWindowAwning);
+    document.getElementById('btn-oven').addEventListener('click', toggleOvenGlow);
+    document.getElementById('btn-reset').addEventListener('click', resetCameraView);
+
+    window.addEventListener('resize', () => {
+      aspect = window.innerWidth / window.innerHeight;
+      camera.left = -orthoExtent * aspect;
+      camera.right = orthoExtent * aspect;
+      camera.top = orthoExtent;
+      camera.bottom = -orthoExtent;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const clock = new THREE.Clock();
+    let frameCount = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      TWEEN.update();
+      controls.update();
+
+      frameCount++;
+      if (frameCount % 4 === 0) {
+        spawnWaterDrop();
+      }
+
+      // Update falling water drops
+      for (let i = waterParticles.length - 1; i >= 0; i--) {
+        const p = waterParticles[i];
+        p.position.y += p.userData.vy;
+        if (p.position.y <= 1.95 - 0.22) {
+          scene.remove(p);
+          waterParticles.splice(i, 1);
+        }
+      }
+
+      // Atmospheric breathing glow
+      const elapsed = clock.getElapsedTime();
+      if (isOvenLit) {
+        ovenLight.intensity = 1.2 + Math.sin(elapsed * 3.6) * 0.16;
+      }
+      garlandPointLight.intensity = 0.72 + Math.sin(elapsed * 2.2) * 0.1;
+
+      renderer.render(scene, camera);
+    }
+
+    function smallPosition(position, fallback) {
+      position = Object.assign({}, fallback || { x:48, y:78 }, position || {});
+      return {
+        x:Math.max(-3.1, Math.min(3.1, (Number(position.x || 48) / 100 - 0.5) * 6.2)),
+        z:Math.max(-2, Math.min(2, 2.05 - Number(position.y || 78) / 100 * 4.1))
+      };
+    }
+    function disposeSmallActor(actor) {
+      if (!actor) return;
+      scene.remove(actor);
+      actor.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          var mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach(function(material) { if (material) material.dispose(); });
+        }
+      });
+    }
+    function buildSmallActor(config, who, position, actorState, size) {
+      config = Object.assign({ skin:'#f2c6a5', hair:'#5b4038', shirt:'#e58f9d', pants:'#779fc2', height:1, headSize:1, glasses:false, hat:false }, config || {});
+      var root = new THREE.Group();
+      var p = smallPosition(position, { x:48, y:78 });
+      root.position.set(p.x, 0, p.z);
+      var sizeScale = 0.78 + Number(size == null ? 11 : size) / 34;
+      root.scale.set(sizeScale, sizeScale * Number(config.height || 1), sizeScale);
+      root.rotation.y = Math.PI;
+      root.userData = { actor:who, pose:(actorState && actorState.pose) || 'stand' };
+      var skin = new THREE.MeshStandardMaterial({ color:config.skin, roughness:.9 });
+      var hair = new THREE.MeshStandardMaterial({ color:config.hair, roughness:.9 });
+      var shirt = new THREE.MeshStandardMaterial({ color:config.shirt, roughness:.8 });
+      var pants = new THREE.MeshStandardMaterial({ color:config.pants, roughness:.8 });
+      var dark = new THREE.MeshStandardMaterial({ color:'#30323a', roughness:.7 });
+      function add(mesh, x, y, z) { mesh.position.set(x,y,z); mesh.castShadow = true; root.add(mesh); return mesh; }
+      add(new THREE.Mesh(new THREE.BoxGeometry(.56,.62,.36), shirt), 0, .7, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(.28,20,14), skin), 0, 1.2, 0).scale.set(config.headSize,config.headSize,config.headSize);
+      var cap = add(new THREE.Mesh(new THREE.SphereGeometry(.29,20,14), hair), 0, 1.3, -.03);
+      cap.scale.set(config.headSize,config.headSize*.72,config.headSize);
+      add(new THREE.Mesh(new THREE.SphereGeometry(.035,8,8), dark), -.09, 1.23, .25);
+      add(new THREE.Mesh(new THREE.SphereGeometry(.035,8,8), dark), .09, 1.23, .25);
+      add(new THREE.Mesh(new THREE.BoxGeometry(.16,.42,.2), pants), -.14, .22, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(.16,.42,.2), pants), .14, .22, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(.13,.5,.16), shirt), -.35, .69, 0).rotation.z = -.12;
+      add(new THREE.Mesh(new THREE.BoxGeometry(.13,.5,.16), shirt), .35, .69, 0).rotation.z = .12;
+      if (config.glasses) add(new THREE.Mesh(new THREE.BoxGeometry(.4,.05,.04), new THREE.MeshStandardMaterial({color:'#4c5360'})), 0, 1.23, .27);
+      if (config.hat) {
+        var hatMat = new THREE.MeshStandardMaterial({color:config.shirt, roughness:.7});
+        add(new THREE.Mesh(new THREE.CylinderGeometry(.36,.36,.06,24), hatMat), 0, 1.53, 0);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(.19,.25,.24,24), hatMat), 0, 1.66, 0);
+      }
+      if (actorState && actorState.pose === 'sit') root.position.y = -.18;
+      if (actorState && actorState.pose === 'sleep') { root.position.y = .25; root.rotation.x = -Math.PI / 2; }
+      if (actorState && actorState.pose === 'wave') root.userData.wave = true;
+      scene.add(root);
+      return root;
+    }
+    function buildSceneAvatars(payload) {
+      payload = payload || {};
+      var actors = payload.actors || {};
+      var positions = payload.positions || {};
+      var states = payload.states || {};
+      var sizes = payload.sizes || {};
+      var meConfig = actors.me || payload.config || { skin:'#f2c6a5', hair:'#5b4038', shirt:'#e58f9d', pants:'#779fc2', height:1, headSize:1, glasses:false, hat:false };
+      disposeSmallActor(customAvatars.me);
+      customAvatars.me = buildSmallActor(meConfig, 'me', positions.me, states.me, sizes.me);
+    }
+    window.updateSmallKitchenAvatar3D = function(config) { buildSceneAvatars({ actors:{ me:config } }); };
+    window.addEventListener('message', function(event) {
+      if (event.source !== window.parent || !event.data) return;
+      if (event.data.type === 'home-avatar3d') buildSceneAvatars(event.data);
+    });
+    buildSceneAvatars();
+    window.parent.postMessage({ type:'home-scene-ready', room:'smallkitchen' }, '*');
+
+    animate();
+  </script>
+</body>
+</html>

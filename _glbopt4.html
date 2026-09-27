@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>GLB 减面 v4</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<style>body{font:13px/1.6 monospace;background:#1b1b1b;color:#ddd;padding:20px}</style>
+</head>
+<body>
+<div id="log">loading libs...</div>
+<script>
+const logEl = document.getElementById('log');
+function log(s, cls) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  if (cls) d.className = cls;
+  logEl.appendChild(d);
+}
+window.__done = false;
+window.__result = null;
+
+/*
+ * 坑点排查备忘：
+ *   flatShading 开着 → 8 万个小三角面的棱角全部露出来，泥皮扫描细纹全显形 → 坑坑洼洼。
+ *   关掉 flatShading 用平滑着色，问题是 3 万顶点网格的三角面还是太小，
+ *     平均不了扫描噪点。
+ *   解法：更 aggressive 减面到 ~1 万顶点（三角面 ~3cm 边），平滑着色下每个面
+ *     的法线能平均掉亚厘米级噪点 → 光滑陶泥感。
+ *   绕序仍用【原始面法线】做参考校正（原始反向仅 0.05%，可信）。
+ */
+
+function clusterDecimate(geometry, targetVerts) {
+  const pos = geometry.attributes.position;
+  const idx = geometry.index;
+  const vCount = pos.count;
+
+  const sampleN = Math.min(vCount, 60000);
+  const step = Math.max(1, Math.floor(vCount / sampleN));
+  const ax = [], ay = [], az = [];
+  for (let i = 0; i < vCount; i += step) {
+    ax.push(pos.getX(i)); ay.push(pos.getY(i)); az.push(pos.getZ(i));
+  }
+  ax.sort((a, b) => a - b); ay.sort((a, b) => a - b); az.sort((a, b) => a - b);
+  const lo = Math.floor(ax.length * 0.005), hi = Math.ceil(ax.length * 0.995) - 1;
+  const minX = ax[lo], minY = ay[lo], minZ = az[lo];
+  const maxDim = Math.max((ax[hi]-ax[lo])||1, (ay[hi]-ay[lo])||1, (az[hi]-az[lo])||1) || 1;
+
+  let best = null, N = 6;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    best = clusterOnce(pos, vCount, N, minX, minY, minZ, maxDim);
+    if (best.verts >= targetVerts) break;
+    N = Math.ceil(N * 1.4);
+    if (N > 600) break;
+  }
+  log('      grid ' + N + '^3 -> ' + best.verts.toLocaleString() + ' verts');
+
+  const built = buildGeometry(best, idx, vCount, pos);
+  log('      winding fixed ' + built.flipped.toLocaleString() +
+      ', degenerate dropped ' + built.dropped.toLocaleString());
+  log('      residual inverted ' + (100 * built.remaining / built.keptTris).toFixed(3) + '%');
+  return { geometry: built.geometry, verts: built.keptVerts, tris: built.keptTris };
+}
+
+function clusterOnce(pos, vCount, N, minX, minY, minZ, maxDim) {
+  const cell = maxDim / N;
+  const map = new Int32Array(vCount).fill(-1);
+  const key2new = new Map();
+  const accPos = [], accCnt = [];
+  for (let i = 0; i < vCount; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const key = Math.floor((x-minX)/cell) + ',' + Math.floor((y-minY)/cell) + ',' + Math.floor((z-minZ)/cell);
+    let n = key2new.get(key);
+    if (n === undefined) {
+      n = accPos.length / 3;
+      key2new.set(key, n);
+      accPos.push(x, y, z); accCnt.push(1);
+    } else {
+      accPos[n*3] += x; accPos[n*3+1] += y; accPos[n*3+2] += z;
+      accCnt[n]++;
+    }
+    map[i] = n;
+  }
+  return { map: map, accPos: accPos, accCnt: accCnt, verts: accPos.length / 3 };
+}
+
+function faceNormalOf(gx, gy, gz, ia, ib, ic) {
+  const bax=gx(ib)-gx(ia), bay=gy(ib)-gy(ia), baz=gz(ib)-gz(ia);
+  const cax=gx(ic)-gx(ia), cay=gy(ic)-gy(ia), caz=gz(ic)-gz(ia);
+  const fx=bay*caz-baz*cay, fy=baz*cax-bax*caz, fz=bax*cay-bay*cax;
+  const l=Math.hypot(fx,fy,fz);
+  if (l < 1e-20) return null;
+  return [fx/l, fy/l, fz/l];
+}
+
+function buildGeometry(best, idx, vCount, origPos) {
+  const kept = best.verts;
+  const P = new Float32Array(kept * 3);
+  for (let n = 0; n < kept; n++) {
+    const c = best.accCnt[n];
+    P[n*3]   = best.accPos[n*3]   / c;
+    P[n*3+1] = best.accPos[n*3+1] / c;
+    P[n*3+2] = best.accPos[n*3+2] / c;
+  }
+  const px = i=>P[i*3], py = i=>P[i*3+1], pz = i=>P[i*3+2];
+  const ox = i=>origPos.getX(i), oy = i=>origPos.getY(i), oz = i=>origPos.getZ(i);
+
+  const srcCount = idx ? idx.count : vCount;
+  const triA = [], triB = [], triC = [];
+  let flipped = 0, dropped = 0;
+  for (let t = 0; t < srcCount; t += 3) {
+    const ia = idx ? idx.getX(t)     : t;
+    const ib = idx ? idx.getX(t + 1) : t + 1;
+    const ic = idx ? idx.getX(t + 2) : t + 2;
+    const A = best.map[ia], B = best.map[ib], C = best.map[ic];
+    if (A === B || B === C || A === C) { dropped++; continue; }
+    const nNew = faceNormalOf(px, py, pz, A, B, C);
+    if (!nNew) { dropped++; continue; }
+    const nOld = faceNormalOf(ox, oy, oz, ia, ib, ic);
+    if (nOld && (nNew[0]*nOld[0] + nNew[1]*nOld[1] + nNew[2]*nOld[2]) < 0) {
+      triA.push(A); triB.push(C); triC.push(B); flipped++;
+    } else {
+      triA.push(A); triB.push(B); triC.push(C);
+    }
+  }
+  const triCount = triA.length;
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  g.setIndex(new THREE.BufferAttribute(
+    kept > 65535 ? new Uint32Array([...triA, ...triB, ...triC]) :
+                    new Uint16Array([...triA, ...triB, ...triC]), 1));
+  // 注意：setIndex 用了展开运算符，三角面在索引数组里是连续的三个一组
+  // 但上面这样写是错的 — triA/triB/triC 已经分别存了每个顶点的索引
+  // 需要交错写成 [A0,B0,C0, A1,B1,C1, ...]
+  g.setIndex(new THREE.BufferAttribute(
+    (() => {
+      const arr = kept > 65535 ? new Uint32Array(triCount*3) : new Uint16Array(triCount*3);
+      for (let t = 0; t < triCount; t++) { arr[t*3]=triA[t]; arr[t*3+1]=triB[t]; arr[t*3+2]=triC[t]; }
+      return arr;
+    })(), 1));
+
+  g.computeVertexNormals();
+
+  // 复核
+  let remaining = 0;
+  {
+    const nP=g.attributes.position, nN=g.attributes.normal, nI=g.index;
+    const a=new THREE.Vector3(), b=new THREE.Vector3(), c=new THREE.Vector3();
+    const f=new THREE.Vector3(), vn=new THREE.Vector3();
+    for (let t = 0; t < nI.count; t += 3) {
+      const ia=nI.getX(t), ib=nI.getX(t+1), ic=nI.getX(t+2);
+      a.fromBufferAttribute(nP, ia); b.fromBufferAttribute(nP, ib); c.fromBufferAttribute(nP, ic);
+      f.crossVectors(b.clone().sub(a), c.clone().sub(a));
+      if (f.lengthSq() < 1e-26) continue;
+      f.normalize();
+      vn.set(nN.getX(ia)+nN.getX(ib)+nN.getX(ic),
+             nN.getY(ia)+nN.getY(ib)+nN.getY(ic),
+             nN.getZ(ia)+nN.getZ(ib)+nN.getZ(ic));
+      if (vn.lengthSq() < 1e-18) continue;
+      vn.normalize();
+      if (f.dot(vn) < 0) remaining++;
+    }
+  }
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  return { geometry: g, flipped: flipped, dropped: dropped,
+           keptVerts: kept, keptTris: triCount, remaining: remaining };
+}
+
+function buildGLB(scene) {
+  const meshes = [];
+  scene.traverse(function (o) { if (o.isMesh) meshes.push(o); });
+  if (!meshes.length) throw new Error('no mesh');
+
+  const binParts = [], bufferViews = [], accessors = [], primitives = [];
+  let byteOffset = 0;
+
+  function pushView(bytes, target) {
+    const pad = (4 - (byteOffset % 4)) % 4;
+    if (pad) { binParts.push(new Uint8Array(pad)); byteOffset += pad; }
+    bufferViews.push({ buffer: 0, byteOffset: byteOffset, byteLength: bytes.byteLength, target: target });
+    binParts.push(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    byteOffset += bytes.byteLength;
+    return bufferViews.length - 1;
+  }
+
+  for (const mesh of meshes) {
+    const g = mesh.geometry;
+    const pos = g.attributes.position, nrm = g.attributes.normal;
+    const pArr = new Float32Array(pos.count * 3);
+    let mnx=Infinity,mny=Infinity,mnz=Infinity,mxx=-Infinity,mxy=-Infinity,mxz=-Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+      pArr[i*3]=x; pArr[i*3+1]=y; pArr[i*3+2]=z;
+      if(x<mnx)mnx=x; if(x>mxx)mxx=x;
+      if(y<mny)mny=y; if(y>mxy)mxy=y;
+      if(z<mnz)mnz=z; if(z>mxz)mxz=z;
+    }
+    const vPos = pushView(pArr, 34962);
+    accessors.push({ bufferView: vPos, componentType: 5126, count: pos.count, type: 'VEC3',
+                      min:[mnx,mny,mnz], max:[mxx,mxy,mxz] });
+    const attributes = { POSITION: accessors.length - 1 };
+
+    if (nrm) {
+      const nArr = new Float32Array(nrm.count * 3);
+      for (let i = 0; i < nrm.count; i++) {
+        nArr[i*3]=nrm.getX(i); nArr[i*3+1]=nrm.getY(i); nArr[i*3+2]=nrm.getZ(i);
+      }
+      const vNrm = pushView(nArr, 34962);
+      accessors.push({ bufferView: vNrm, componentType: 5126, count: nrm.count, type: 'VEC3' });
+      attributes.NORMAL = accessors.length - 1;
+    }
+
+    if (g.index) {
+      const src = g.index.array;
+      const use32 = pos.count > 65535;
+      const vIdx = pushView(use32 ? new Uint32Array(src) : new Uint16Array(src), 34963);
+      accessors.push({ bufferView: vIdx, componentType: use32 ? 5125 : 5123, count: src.length, type: 'SCALAR' });
+      primitives.push({ attributes: attributes, indices: accessors.length - 1, material: 0 });
+    } else {
+      primitives.push({ attributes: attributes, material: 0 });
+    }
+  }
+
+  const bin = new Uint8Array(byteOffset);
+  let w = 0;
+  for (const p of binParts) { bin.set(p, w); w += p.length; }
+
+  const gltf = {
+    asset: { version: '2.0', generator: 'cluster-smooth' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, name: 'chair' }],
+    meshes: [{ name: 'chair', primitives: primitives }],
+    materials: [{ name: 'clay',
+      pbrMetallicRoughness: { baseColorFactor: [1,1,1,1], metallicFactor: 0, roughnessFactor: 0.78 },
+      doubleSided: true }],
+    accessors: accessors,
+    bufferViews: bufferViews,
+    buffers: [{ byteLength: bin.byteLength }]
+  };
+
+  let jb = new TextEncoder().encode(JSON.stringify(gltf));
+  const jp = (4 - (jb.length % 4)) % 4;
+  if (jp) { const p = new Uint8Array(jb.length + jp); p.set(jb); p.fill(0x20, jb.length); jb = p; }
+  const bp = (4 - (bin.length % 4)) % 4;
+  let bo = bin;
+  if (bp) { bo = new Uint8Array(bin.length + bp); bo.set(bin); }
+
+  const total = 12 + 8 + jb.length + 8 + bo.length;
+  const out = new Uint8Array(total);
+  const dv = new DataView(out.buffer);
+  let o = 0;
+  dv.setUint32(o, 0x46546C67, true); o += 4;
+  dv.setUint32(o, 2, true); o += 4;
+  dv.setUint32(o, total, true); o += 4;
+  dv.setUint32(o, jb.length, true); o += 4;
+  dv.setUint32(o, 0x4E4F534A, true); o += 4;
+  out.set(jb, o); o += jb.length;
+  dv.setUint32(o, bo.length, true); o += 4;
+  dv.setUint32(o, 0x004E4942, true); o += 4;
+  out.set(bo, o);
+  return out.buffer;
+}
+
+async function processOne(url, outName, targetVerts) {
+  log('--- ' + url + ' ---');
+  const gltf = await new THREE.GLTFLoader().loadAsync(url);
+
+  let inV = 0, inT = 0;
+  gltf.scene.traverse(function (o) {
+    if (!o.isMesh) return;
+    const p = o.geometry.attributes.position;
+    inV += p.count;
+    inT += (o.geometry.index ? o.geometry.index.count : p.count) / 3;
+  });
+  log('  orig: ' + inV.toLocaleString() + ' verts / ' + Math.round(inT).toLocaleString() + ' tris', 'dim');
+
+  gltf.scene.traverse(function (o) {
+    if (!o.isMesh) return;
+    const r = clusterDecimate(o.geometry, targetVerts);
+    o.geometry = r.geometry;
+    o.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.78, metalness: 0 });
+    log('  decimated: ' + r.verts.toLocaleString() + ' verts / ' + r.tris.toLocaleString() + ' tris');
+  });
+
+  const buf = buildGLB(gltf.scene);
+  log('  out: ' + (buf.byteLength / 1024).toFixed(0) + ' KB');
+  if (buf.byteLength < 1024) throw new Error('output too small');
+
+  const resp = await fetch('/save?name=' + encodeURIComponent(outName), { method: 'POST', body: buf });
+  if (!resp.ok) throw new Error('save failed HTTP ' + resp.status);
+  return buf.byteLength;
+}
+
+(async function () {
+  try {
+    const before = 15399776 + 31384632;
+    const a = await processOne('chair1.src.glb', 'chair1.opt.glb', 10000);
+    const b = await processOne('chair2.src.glb', 'chair2.opt.glb', 10000);
+    const after = a + b;
+    log('done: ' + (before/1048576).toFixed(1) + ' MB -> ' + (after/1024).toFixed(0) + ' KB', 'ok');
+    window.__result = { a: a, b: b, total: after, before: before };
+  } catch (e) {
+    log('FAIL: ' + (e && e.message ? e.message : e), 'err');
+    window.__result = { error: String(e && e.message || e) };
+  }
+  window.__done = true;
+})();
+</script>
+</body>
+</html>
