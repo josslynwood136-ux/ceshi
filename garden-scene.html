@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Cozy Balcony Diorama - Babylon.js</title>
+  <!-- 引入 Babylon.js 核心库及加载器 -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #e8e3dc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #renderCanvas { width: 100%; height: 100%; touch-action: none; outline: none; display: block; }
+    
+    /* 悬浮小卡片 UI */
+    .hud-card {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(12px);
+      padding: 14px 18px;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+      pointer-events: none;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+    .hud-title { font-size: 15px; font-weight: 700; color: #4a3e36; display: flex; align-items: center; gap: 6px; }
+    .hud-sub { font-size: 11px; color: #9c8e82; margin-top: 3px; }
+    
+    /* 底部交互控制按钮 */
+    .controls-bar {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(14px);
+      padding: 6px 12px;
+      border-radius: 30px;
+      box-shadow: 0 10px 32px rgba(90, 75, 60, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+    }
+    .btn {
+      background: transparent;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #635347;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .btn:hover { background: #f4ede4; color: #2e2620; }
+    .btn.active { background: #d98880; color: #fff; box-shadow: 0 3px 10px rgba(217, 136, 128, 0.35); }
+  </style>
+</head>
+<body>
+
+  <div class="hud-card">
+    <div class="hud-title">🌿 治愈系微缩阳台</div>
+    <div class="hud-sub">左键旋转 · 右键平移 · 滚轮缩放 · 点击家具互动</div>
+  </div>
+
+  <div class="controls-bar">
+    <button class="btn active" id="btnDay" onclick="setMode('day')">☀️ 暖阳午后</button>
+    <button class="btn" id="btnNight" onclick="setMode('night')">🌙 晚风微凉</button>
+    <button class="btn" onclick="swingChair()">🧺 晃荡吊椅</button>
+  </div>
+
+  <canvas id="renderCanvas"></canvas>
+
+  <script>
+    window.addEventListener('error', function (event) {
+      try { window.parent.postMessage({ type:'home-scene-error', room:'garden', message:String(event.message || event.error || 'scene error') }, '*'); } catch (e) {}
+    });
+    const canvas = document.getElementById("renderCanvas");
+    const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+
+    let scene, camera, dirLight, hemiLight, shadowGenerator;
+    let hangingChairGroup, coffeeSteam, isNight = false;
+    let customAvatars = { me: null };
+
+    // 材质调色板 (低饱和奶油日系质感)
+    const PALETTE = {
+      wall: "#f5eee6",
+      woodDeck: "#cfa67a",
+      woodDeckDark: "#b89066",
+      coping: "#e39b7d",
+      whiteTrim: "#ffffff",
+      terracotta: "#d9745b",
+      leafGreen: "#7da87b",
+      leafDark: "#527950",
+      rattan: "#ecd5b9",
+      rattanCushion: "#f7cfcf",
+      accentPillow: "#fff0cb",
+      ironBlack: "#363636",
+      glass: "#bde0fe",
+      gold: "#deb887"
+    };
+
+    function createColorMat(name, hex, roughness = 0.7, metallic = 0.05) {
+      const mat = new BABYLON.PBRMetallicRoughnessMaterial(name, scene);
+      mat.baseColor = BABYLON.Color3.FromHexString(hex);
+      mat.roughness = roughness;
+      mat.metallic = metallic;
+      return mat;
+    }
+
+    const createScene = function () {
+      scene = new BABYLON.Scene(engine);
+      scene.clearColor = BABYLON.Color4.FromHexString("#e8e3dcaa");
+
+      // 1. 等距正交相机 (Isometric Orthographic Camera)
+      camera = new BABYLON.ArcRotateCamera("isoCam", -Math.PI / 4, Math.PI / 3, 26, new BABYLON.Vector3(0, 1.8, 0), scene);
+      camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+      camera.attachControl(canvas, true);
+      camera.lowerRadiusLimit = 15;
+      camera.upperRadiusLimit = 40;
+      camera.upperBetaLimit = Math.PI / 2.15; // 不穿底
+      camera.wheelPrecision = 20;
+
+      function updateOrtho() {
+        const aspect = canvas.clientWidth / canvas.clientHeight;
+        const zoom = 5.2;
+        camera.orthoLeft = -zoom * aspect;
+        camera.orthoRight = zoom * aspect;
+        camera.orthoTop = zoom;
+        camera.orthoBottom = -zoom;
+      }
+      updateOrtho();
+      window.addEventListener("resize", updateOrtho);
+      window.addEventListener("load", updateOrtho);
+      setTimeout(updateOrtho, 180);
+
+      // 2. 摄影棚光照与柔和阴影
+      hemiLight = new BABYLON.HemisphericLight("hemiLight", new BABYLON.Vector3(0, 1, 0), scene);
+      hemiLight.intensity = 0.65;
+      hemiLight.groundColor = new BABYLON.Color3(0.8, 0.75, 0.7);
+
+      dirLight = new BABYLON.DirectionalLight("sunLight", new BABYLON.Vector3(-0.6, -1.2, 0.8), scene);
+      dirLight.position = new BABYLON.Vector3(12, 20, -14);
+      dirLight.intensity = 1.6;
+      dirLight.diffuse = BABYLON.Color3.FromHexString("#fff6ea");
+
+      shadowGenerator = new BABYLON.ShadowGenerator(2048, dirLight);
+      shadowGenerator.useBlurCloseExponentialShadowMap = true;
+      shadowGenerator.blurKernel = 32;
+      shadowGenerator.setDarkness(0.28);
+
+      // ---- 场景模型构建 ----
+      buildBalconyArchitecture();
+      buildCustomHangingChair();
+      buildBistroTable();
+      buildPlantsAndDecor();
+      buildSceneAvatars();
+      setupAudioAndInteractions();
+
+      return scene;
+    };
+
+    // 1. 架构：地面基座、防腐木甲板、后墙与法式推拉门
+    function buildBalconyArchitecture() {
+      const roomSize = 8;
+      const wallH = 6.5;
+
+      // 奶油色圆角基座
+      const baseMat = createColorMat("baseMat", "#fbf8f5", 0.9);
+      const base = BABYLON.MeshBuilder.CreateBox("base", { width: roomSize, height: 0.8, depth: roomSize }, scene);
+      base.position.y = -0.4;
+      base.receiveShadows = true;
+      base.material = baseMat;
+
+      // 防腐木拼接甲板
+      const deckMat1 = createColorMat("deckMat1", PALETTE.woodDeck, 0.8);
+      const deckMat2 = createColorMat("deckMat2", PALETTE.woodDeckDark, 0.8);
+      const plankW = 0.68, plankGap = 0.04;
+      for (let x = -roomSize / 2 + 0.45; x < roomSize / 2 - 0.2; x += plankW + plankGap) {
+        const plank = BABYLON.MeshBuilder.CreateBox("plank", { width: plankW, height: 0.1, depth: roomSize - 0.4 }, scene);
+        plank.position.set(x, 0.05, 0);
+        plank.receiveShadow = true;
+        plank.material = (Math.floor(x * 10) % 2 === 0) ? deckMat1 : deckMat2;
+      }
+
+      // 后侧主墙 (左后侧)
+      const wallMat = createColorMat("wallMat", PALETTE.wall, 0.95);
+      const backWall = BABYLON.MeshBuilder.CreateBox("backWall", { width: roomSize, height: wallH, depth: 0.4 }, scene);
+      backWall.position.set(0, wallH / 2, -roomSize / 2 - 0.2);
+      backWall.receiveShadow = true;
+      backWall.material = wallMat;
+
+      // 顶部焦糖赤陶色压顶
+      const copingMat = createColorMat("copingMat", PALETTE.coping, 0.6);
+      const coping = BABYLON.MeshBuilder.CreateBox("coping", { width: roomSize + 0.3, height: 0.35, depth: 0.55 }, scene);
+      coping.position.set(0, wallH + 0.17, -roomSize / 2 - 0.2);
+      coping.material = copingMat;
+      shadowGenerator.addShadowCaster(coping);
+
+      // 法式拱形落地玻璃门边框
+      const frameMat = createColorMat("frameMat", PALETTE.whiteTrim, 0.5);
+      const doorFrame = BABYLON.MeshBuilder.CreateBox("doorFrame", { width: 3.6, height: 4.8, depth: 0.1 }, scene);
+      doorFrame.position.set(-0.8, 2.4, -roomSize / 2 - 0.02);
+      doorFrame.material = frameMat;
+
+      // 门内玻璃 (半透明水蓝玻璃)
+      const glassMat = new BABYLON.PBRMaterial("glassMat", scene);
+      glassMat.albedoColor = BABYLON.Color3.FromHexString(PALETTE.glass);
+      glassMat.alpha = 0.45;
+      glassMat.roughness = 0.1;
+      glassMat.metallic = 0.1;
+      const doorGlass = BABYLON.MeshBuilder.CreatePlane("doorGlass", { width: 3.2, height: 4.4 }, scene);
+      doorGlass.position.set(-0.8, 2.4, -roomSize / 2 + 0.04);
+      doorGlass.material = glassMat;
+
+      // 阳台前面与右面的矮栏杆
+      buildRailing(roomSize);
+    }
+
+    // 阳台圆润细柱护栏
+    function buildRailing(size) {
+      const railMat = createColorMat("railMat", PALETTE.whiteTrim, 0.7);
+      const railGroup = new BABYLON.TransformNode("railGroup");
+
+      // 顶部横木扶手
+      const topBarF = BABYLON.MeshBuilder.CreateCylinder("barF", { diameter: 0.18, height: size - 0.4 }, scene);
+      topBarF.rotation.z = Math.PI / 2;
+      topBarF.position.set(0, 1.4, size / 2 - 0.2);
+      topBarF.material = railMat;
+      shadowGenerator.addShadowCaster(topBarF);
+
+      const topBarR = BABYLON.MeshBuilder.CreateCylinder("barR", { diameter: 0.18, height: size - 0.4 }, scene);
+      topBarR.rotation.x = Math.PI / 2;
+      topBarR.position.set(size / 2 - 0.2, 1.4, 0);
+      topBarR.material = railMat;
+      shadowGenerator.addShadowCaster(topBarR);
+
+      // 坚固立柱
+      const postPos = [
+        [-size / 2 + 0.2, size / 2 - 0.2],
+        [0, size / 2 - 0.2],
+        [size / 2 - 0.2, size / 2 - 0.2],
+        [size / 2 - 0.2, 0]
+      ];
+      postPos.forEach(p => {
+        const post = BABYLON.MeshBuilder.CreateCylinder("post", { diameter: 0.22, height: 1.4 }, scene);
+        post.position.set(p[0], 0.7, p[1]);
+        post.material = railMat;
+        shadowGenerator.addShadowCaster(post);
+      });
+
+      // 竖向密排小细杆
+      for (let i = -size / 2 + 0.7; i < size / 2 - 0.4; i += 0.55) {
+        // 前侧
+        const slatF = BABYLON.MeshBuilder.CreateCylinder("slatF", { diameter: 0.08, height: 1.3 }, scene);
+        slatF.position.set(i, 0.65, size / 2 - 0.2);
+        slatF.material = railMat;
+        shadowGenerator.addShadowCaster(slatF);
+        // 右侧
+        const slatR = BABYLON.MeshBuilder.CreateCylinder("slatR", { diameter: 0.08, height: 1.3 }, scene);
+        slatR.position.set(size / 2 - 0.2, 0.65, i);
+        slatR.material = railMat;
+        shadowGenerator.addShadowCaster(slatR);
+      }
+    }
+
+    // 2. 灵魂家具：微风轻晃的藤编蛋壳吊篮椅 (Hanging Egg Chair)
+    function buildHangingChair() {
+      hangingChairGroup = new BABYLON.TransformNode("hangingChairNode");
+      hangingChairGroup.position.set(-2.2, 0, 1.0);
+
+      const ironMat = createColorMat("ironMat", PALETTE.ironBlack, 0.3, 0.8);
+      const rattanMat = createColorMat("rattanMat", PALETTE.rattan, 0.85);
+      const cushionMat = createColorMat("cushionMat", PALETTE.rattanCushion, 0.95);
+      const pillowMat = createColorMat("pillowMat", PALETTE.accentPillow, 0.9);
+
+      // 弧形金属支架与圆盘底座
+      const baseDisc = BABYLON.MeshBuilder.CreateCylinder("cBase", { diameter: 2.2, height: 0.08 }, scene);
+      baseDisc.position.y = 0.04;
+      baseDisc.material = ironMat;
+      baseDisc.parent = hangingChairGroup;
+
+      const pole = BABYLON.MeshBuilder.CreateCylinder("cPole", { diameter: 0.12, height: 4.8 }, scene);
+      pole.position.set(-0.8, 2.4, -0.6);
+      pole.material = ironMat;
+      pole.parent = hangingChairGroup;
+      shadowGenerator.addShadowCaster(pole);
+
+      const arm = BABYLON.MeshBuilder.CreateCylinder("cArm", { diameter: 0.1, height: 1.2 }, scene);
+      arm.rotation.z = Math.PI / 3;
+      arm.position.set(-0.35, 4.8, -0.6);
+      arm.material = ironMat;
+      arm.parent = hangingChairGroup;
+
+      // 吊绳
+      const rope = BABYLON.MeshBuilder.CreateCylinder("cRope", { diameter: 0.03, height: 1.2 }, scene);
+      rope.position.set(0, 4.0, -0.1);
+      rope.material = ironMat;
+      rope.parent = hangingChairGroup;
+
+      // 可晃动的蛋壳篮体容器
+      const basket = new BABYLON.TransformNode("basketMesh");
+      basket.position.set(0, 2.2, -0.1);
+      basket.parent = hangingChairGroup;
+
+      // 外形：切除前半部分的圆润蛋壳 (用半球或圆环拼接)
+      const shell = BABYLON.MeshBuilder.CreateSphere("shell", { diameterX: 2.0, diameterY: 2.6, diameterZ: 1.6, slice: 0.6 }, scene);
+      shell.rotation.x = Math.PI;
+      shell.rotation.y = Math.PI / 4;
+      shell.material = rattanMat;
+      shell.parent = basket;
+      shadowGenerator.addShadowCaster(shell);
+
+      // 松软饱满的粉色大坐垫
+      const cushion = BABYLON.MeshBuilder.CreateSphere("cushion", { diameterX: 1.4, diameterY: 0.45, diameterZ: 1.3 }, scene);
+      cushion.position.set(0, -0.55, 0.1);
+      cushion.material = cushionMat;
+      cushion.parent = basket;
+      shadowGenerator.addShadowCaster(cushion);
+
+      // 靠背软包与黄色小抱枕
+      const backCushion = BABYLON.MeshBuilder.CreateSphere("bCushion", { diameterX: 1.2, diameterY: 1.0, diameterZ: 0.3 }, scene);
+      backCushion.position.set(0, 0.0, -0.4);
+      backCushion.rotation.x = -0.2;
+      backCushion.material = cushionMat;
+      backCushion.parent = basket;
+
+      const smallPillow = BABYLON.MeshBuilder.CreateSphere("sPillow", { diameter: 0.5 }, scene);
+      smallPillow.scaling = new BABYLON.Vector3(1, 0.6, 0.9);
+      smallPillow.position.set(0.2, -0.3, -0.15);
+      smallPillow.rotation.z = 0.3;
+      smallPillow.material = pillowMat;
+      smallPillow.parent = basket;
+
+      // 自然微风晃荡动画
+      let swingAngle = 0;
+      scene.onBeforeRenderObservable.add(() => {
+        swingAngle += 0.025;
+        basket.rotation.z = Math.sin(swingAngle) * 0.04;
+        basket.rotation.x = Math.cos(swingAngle * 0.8) * 0.03;
+      });
+    }
+
+    // 附件中的藤编蛋壳吊椅（Babylon.js 适配版）
+    function buildCustomHangingChair() {
+      hangingChairGroup = new BABYLON.TransformNode("hangingChairNode", scene);
+      hangingChairGroup.position.set(-2.2, 0, 1.0);
+      hangingChairGroup.scaling.setAll(1.12);
+
+      function customMat(name, hex, shine) {
+        var cm = new BABYLON.StandardMaterial(name, scene);
+        cm.diffuseColor = BABYLON.Color3.FromHexString(hex);
+        cm.specularColor = new BABYLON.Color3(shine || 0.12, shine || 0.12, shine || 0.12);
+        cm.emissiveColor = cm.diffuseColor.scale(0.035);
+        return cm;
+      }
+      var ironMat = customMat("customIron", "#292724", 0.32);
+      var rattanMat = customMat("customRattan", "#d7aa73", 0.08);
+      var rimMat = customMat("customRim", "#b77d4e", 0.1);
+      var cushionMat = customMat("customCushion", "#f3a9bd", 0.05);
+      var pillowMat = customMat("customPillow", "#ffe18a", 0.05);
+
+      var base = BABYLON.MeshBuilder.CreateCylinder("customChairBase", {diameter: 2.0, height: 0.06, tessellation: 32}, scene);
+      base.position.y = 0.03; base.material = ironMat; base.parent = hangingChairGroup; base.receiveShadows = true;
+      shadowGenerator.addShadowCaster(base);
+
+      var pole = BABYLON.MeshBuilder.CreateCylinder("customChairPole", {height: 3.2, diameter: 0.09, tessellation: 16}, scene);
+      pole.position.set(-0.35, 1.6, -0.4); pole.material = ironMat; pole.parent = hangingChairGroup;
+      shadowGenerator.addShadowCaster(pole);
+      var arm = BABYLON.MeshBuilder.CreateCylinder("customChairArm", {height: 0.9, diameter: 0.08, tessellation: 16}, scene);
+      arm.rotation.z = -Math.PI / 3.2; arm.position.set(0.05, 3.35, -0.2); arm.material = ironMat; arm.parent = hangingChairGroup;
+      var chain = BABYLON.MeshBuilder.CreateCylinder("customChairChain", {height: 0.65, diameter: 0.024, tessellation: 8}, scene);
+      chain.position.set(0.35, 2.8, 0); chain.material = ironMat; chain.parent = hangingChairGroup;
+
+      var basket = new BABYLON.TransformNode("basketMesh", scene);
+      basket.position.set(0.35, 1.6, 0); basket.parent = hangingChairGroup;
+      var rim = BABYLON.MeshBuilder.CreateTorus("customChairRim", {diameter: 1.44, thickness: 0.09, tessellation: 32}, scene);
+      rim.rotation.y = Math.PI / 2; rim.material = rimMat; rim.parent = basket;
+      var backRim = BABYLON.MeshBuilder.CreateTorus("customChairBackRim", {diameter: 1.36, thickness: 0.07, tessellation: 32}, scene);
+      backRim.rotation.y = Math.PI / 2; backRim.position.x = -0.25; backRim.scaling.set(0.85, 0.95, 0.85); backRim.material = rimMat; backRim.parent = basket;
+      for (var r = -0.45; r <= 0.45; r += 0.18) {
+        var rib = BABYLON.MeshBuilder.CreateTorus("customChairRib" + r, {diameter: 1.3, thickness: 0.035, tessellation: 24}, scene);
+        rib.rotation.z = Math.PI / 2; rib.rotation.y = r * 1.5; rib.position.x = -0.15; rib.material = rattanMat; rib.parent = basket;
+      }
+      var seat = BABYLON.MeshBuilder.CreateSphere("customChairCushion", {diameter: 1.04, segments: 24}, scene);
+      seat.scaling.set(1.1, 0.35, 0.95); seat.position.set(0, -0.36, 0); seat.material = cushionMat; seat.parent = basket; seat.receiveShadows = true;
+      var back = BABYLON.MeshBuilder.CreateSphere("customChairBack", {diameter: 0.84, segments: 20}, scene);
+      back.scaling.set(0.9, 0.75, 0.28); back.position.set(-0.25, -0.05, 0); back.rotation.z = 0.25; back.material = cushionMat; back.parent = basket;
+      var pillow = BABYLON.MeshBuilder.CreateCylinder("customChairPillow", {height: 0.1, diameter: 0.36, tessellation: 24}, scene);
+      pillow.rotation.z = Math.PI / 2; pillow.rotation.x = 0.3; pillow.position.set(0.08, -0.18, 0.15); pillow.material = pillowMat; pillow.parent = basket;
+      shadowGenerator.addShadowCaster(seat); shadowGenerator.addShadowCaster(back);
+
+      var swingTime = Math.random() * 10;
+      scene.onBeforeRenderObservable.add(function () {
+        swingTime += 0.025;
+        basket.rotation.z = Math.sin(swingTime) * 0.035;
+        basket.rotation.x = Math.cos(swingTime * 0.7) * 0.02;
+      });
+    }
+
+    // 3. 惬意茶歇：小圆桌、点心、热气咖啡杯
+    function buildBistroTable() {
+      const tableGroup = new BABYLON.TransformNode("tableGroup");
+      tableGroup.position.set(1.6, 0, 1.4);
+
+      const woodMat = createColorMat("tableWood", PALETTE.coping, 0.7);
+      const whiteMat = createColorMat("tableWhite", PALETTE.whiteTrim, 0.6);
+
+      // 桌子三脚与圆台面
+      const tabletop = BABYLON.MeshBuilder.CreateCylinder("tTop", { diameter: 2.0, height: 0.08 }, scene);
+      tabletop.position.y = 1.7;
+      tabletop.material = woodMat;
+      tabletop.parent = tableGroup;
+      tabletop.receiveShadows = true;
+      shadowGenerator.addShadowCaster(tabletop);
+
+      const tLeg = BABYLON.MeshBuilder.CreateCylinder("tLeg", { diameter: 0.1, height: 1.7 }, scene);
+      tLeg.position.y = 0.85;
+      tLeg.material = whiteMat;
+      tLeg.parent = tableGroup;
+
+      const tBase = BABYLON.MeshBuilder.CreateCylinder("tBase", { diameter: 1.2, height: 0.06 }, scene);
+      tBase.position.y = 0.03;
+      tBase.material = whiteMat;
+      tBase.parent = tableGroup;
+
+      // 托盘与咖啡杯
+      const tray = BABYLON.MeshBuilder.CreateCylinder("tray", { diameter: 0.9, height: 0.03 }, scene);
+      tray.position.set(-0.2, 1.75, 0.1);
+      tray.material = whiteMat;
+      tray.parent = tableGroup;
+
+      const cupMat = createColorMat("cupMat", PALETTE.terracotta, 0.6);
+      const cup = BABYLON.MeshBuilder.CreateCylinder("coffeeCup", { diameter: 0.22, height: 0.2 }, scene);
+      cup.position.set(-0.2, 1.86, 0.1);
+      cup.material = cupMat;
+      cup.parent = tableGroup;
+      shadowGenerator.addShadowCaster(cup);
+
+      // 真实冒出的微热气粒子 (Particle System)
+      createCoffeeSteam(new BABYLON.Vector3(1.4, 2.0, 1.5));
+
+      // 甜品小可颂
+      const breadMat = createColorMat("breadMat", "#df9852", 0.8);
+      const bread = BABYLON.MeshBuilder.CreateTorus("croissant", { diameter: 0.24, thickness: 0.1, tessellation: 16 }, scene);
+      bread.position.set(0.3, 1.78, 0.2);
+      bread.scaling = new BABYLON.Vector3(1.3, 0.6, 0.9);
+      bread.material = breadMat;
+      bread.parent = tableGroup;
+
+      // 单只小花瓶插小雏菊
+      const vaseMat = createColorMat("vaseMat", "#ffffff", 0.3);
+      const vase = BABYLON.MeshBuilder.CreateCylinder("vase", { diameterTop: 0.14, diameterBottom: 0.24, height: 0.55 }, scene);
+      vase.position.set(0.2, 2.0, -0.4);
+      vase.material = vaseMat;
+      vase.parent = tableGroup;
+      shadowGenerator.addShadowCaster(vase);
+    }
+
+    // 咖啡蒸汽粒子
+    function createCoffeeSteam(pos) {
+      coffeeSteam = new BABYLON.ParticleSystem("steam", 80, scene);
+      coffeeSteam.particleTexture = new BABYLON.Texture("https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/sprites/snowflake1.png", scene);
+      coffeeSteam.emitter = pos;
+      coffeeSteam.minEmitBox = new BABYLON.Vector3(-0.02, 0, -0.02);
+      coffeeSteam.maxEmitBox = new BABYLON.Vector3(0.02, 0, 0.02);
+      coffeeSteam.color1 = new BABYLON.Color4(1, 1, 1, 0.35);
+      coffeeSteam.color2 = new BABYLON.Color4(1, 0.95, 0.9, 0.15);
+      coffeeSteam.colorDead = new BABYLON.Color4(1, 1, 1, 0.0);
+      coffeeSteam.minSize = 0.06;
+      coffeeSteam.maxSize = 0.18;
+      coffeeSteam.minLifeTime = 1.0;
+      coffeeSteam.maxLifeTime = 2.0;
+      coffeeSteam.emitRate = 20;
+      coffeeSteam.gravity = new BABYLON.Vector3(0, 0.18, 0);
+      coffeeSteam.direction1 = new BABYLON.Vector3(-0.02, 0.3, -0.02);
+      coffeeSteam.direction2 = new BABYLON.Vector3(0.02, 0.4, 0.02);
+      coffeeSteam.start();
+    }
+
+    function gardenPosition(position, fallback) {
+      position = Object.assign({}, fallback || { x:50, y:78 }, position || {});
+      return new BABYLON.Vector3(
+        Math.max(-3.3, Math.min(3.3, (Number(position.x || 50) / 100 - 0.5) * 7)),
+        0,
+        Math.max(-2.0, Math.min(2.0, 2.15 - Number(position.y || 78) / 100 * 4.2))
+      );
+    }
+    function disposeGardenActor(actor) {
+      if (!actor) return;
+      try {
+        actor.getChildMeshes().forEach(function(mesh) {
+          try { shadowGenerator.removeShadowCaster(mesh, true); } catch (e) {}
+        });
+        actor.dispose(false, true);
+      } catch (e) {
+        try { actor.dispose(); } catch (e2) {}
+      }
+    }
+    function buildGardenActor(config, who, position, actorState, size) {
+      config = Object.assign({ skin:'#f2c6a5', hair:'#5b4038', shirt:'#e58f9d', pants:'#779fc2', height:1, headSize:1, glasses:false, hat:false }, config || {});
+      var root = new BABYLON.TransformNode('home-avatar-' + who, scene);
+      var rig = new BABYLON.TransformNode('home-avatar-rig-' + who, scene);
+      rig.parent = root;
+      var skin = createColorMat('avatar-skin-' + who, config.skin, 0.9);
+      var hair = createColorMat('avatar-hair-' + who, config.hair, 0.9);
+      var shirt = createColorMat('avatar-shirt-' + who, config.shirt, 0.8);
+      var pants = createColorMat('avatar-pants-' + who, config.pants, 0.8);
+      var dark = createColorMat('avatar-dark-' + who, '#30323a', 0.7);
+      function addSphere(n,d,m,x,y,z,sx,sy,sz) {
+        var o = BABYLON.MeshBuilder.CreateSphere(n, { diameter:d, segments:20 }, scene);
+        o.parent = rig; o.material = m; o.position.set(x || 0, y || 0, z || 0);
+        o.scaling.set(sx || 1, sy || 1, sz || 1); shadowGenerator.addShadowCaster(o); return o;
+      }
+      function addBox(n,w,h,d,m,x,y,z) {
+        var o = BABYLON.MeshBuilder.CreateBox(n, { width:w, height:h, depth:d }, scene);
+        o.parent = rig; o.material = m; o.position.set(x || 0, y || 0, z || 0); shadowGenerator.addShadowCaster(o); return o;
+      }
+      addBox('avatar-body-' + who, .56, .62, .36, shirt, 0, .7, 0);
+      addSphere('avatar-head-' + who, .56, skin, 0, 1.2, 0, config.headSize, config.headSize, config.headSize);
+      addSphere('avatar-hair-' + who, .58, hair, 0, 1.3, -.03, config.headSize, config.headSize * .72, config.headSize);
+      addSphere('avatar-eye-l-' + who, .045, dark, -.09, 1.23, .25);
+      addSphere('avatar-eye-r-' + who, .045, dark, .09, 1.23, .25);
+      addBox('avatar-leg-l-' + who, .16, .42, .2, pants, -.14, .22, 0);
+      addBox('avatar-leg-r-' + who, .16, .42, .2, pants, .14, .22, 0);
+      var armL = addBox('avatar-arm-l-' + who, .13, .5, .16, shirt, -.35, .69, 0);
+      var armR = addBox('avatar-arm-r-' + who, .13, .5, .16, shirt, .35, .69, 0);
+      armL.rotation.z = -.12; armR.rotation.z = .12;
+      if (config.glasses) addBox('avatar-glasses-' + who, .4, .05, .04, createColorMat('avatar-glass-' + who, '#4c5360', .3), 0, 1.23, .27);
+      if (config.hat) {
+        var hm = createColorMat('avatar-hat-' + who, config.shirt, .7);
+        var brim = BABYLON.MeshBuilder.CreateCylinder('avatar-hat-brim-' + who, { diameter:.72, height:.06, tessellation:24 }, scene);
+        brim.parent = rig; brim.material = hm; brim.position.y = 1.53; shadowGenerator.addShadowCaster(brim);
+        var topHat = BABYLON.MeshBuilder.CreateCylinder('avatar-hat-top-' + who, { diameterTop:.38, diameterBottom:.5, height:.24, tessellation:24 }, scene);
+        topHat.parent = rig; topHat.material = hm; topHat.position.y = 1.66; shadowGenerator.addShadowCaster(topHat);
+      }
+      root.position.copyFrom(gardenPosition(position, { x:41, y:78 }));
+      root.scaling.setAll(0.78 + Number(size == null ? 11 : size) / 34);
+      root.rotation.y = Math.PI;
+      root.metadata = { actor:who, rig:rig, armL:armL, armR:armR, pose:(actorState && actorState.pose) || 'stand' };
+      rig.scaling.y = Number(config.height || 1);
+      if (actorState && actorState.pose === 'sit') { rig.position.y = -.2; armL.rotation.x = -.3; armR.rotation.x = -.3; }
+      if (actorState && actorState.pose === 'sleep') { rig.position.y = .34; rig.rotation.x = -Math.PI / 2; }
+      if (actorState && actorState.pose === 'wave') armR.rotation.z = -2.1;
+      return root;
+    }
+    function buildSceneAvatars(payload) {
+      payload = payload || {};
+      var actors = payload.actors || {};
+      var positions = payload.positions || {};
+      var states = payload.states || {};
+      var sizes = payload.sizes || {};
+      var meConfig = actors.me || payload.config || { skin:'#f2c6a5', hair:'#5b4038', shirt:'#e58f9d', pants:'#779fc2', height:1, headSize:1, glasses:false, hat:false };
+      disposeGardenActor(customAvatars.me);
+      customAvatars.me = buildGardenActor(meConfig, 'me', positions.me, states.me, sizes.me);
+      scene && customAvatars.me && !customAvatars.me.parent && scene.addTransformNode && scene.addTransformNode(customAvatars.me);
+    }
+    // 旧版调用兼容
+    window.updateGardenAvatar3D = function(config) { buildSceneAvatars({ actors:{ me:config } }); };
+    window.addEventListener('message', function(event) {
+      if (event.source !== window.parent || !event.data) return;
+      if (event.data.type === 'home-avatar3d') buildSceneAvatars(event.data);
+    });
+
+    // 4. 绿植、花架与墙上小串灯 (Lush Plants & Fairy Lights)
+    function buildPlantsAndDecor() {
+      const potMat = createColorMat("potMat", PALETTE.terracotta, 0.7);
+      const leafMat = createColorMat("leafMat", PALETTE.leafGreen, 0.85);
+
+      // 左前角：大型赤陶盆栽 (虎尾兰)
+      const bigPot = BABYLON.MeshBuilder.CreateCylinder("bigPot", { diameterTop: 0.9, diameterBottom: 0.65, height: 1.0 }, scene);
+      bigPot.position.set(-2.8, 0.5, 2.8);
+      bigPot.material = potMat;
+      shadowGenerator.addShadowCaster(bigPot);
+
+      for (let l = 0; l < 9; l++) {
+        const leafH = 1.4 + (l % 3) * 0.4;
+        const leaf = BABYLON.MeshBuilder.CreateBox("leaf", { width: 0.16, height: leafH, depth: 0.04 }, scene);
+        const ang = (l / 9) * Math.PI * 2;
+        leaf.position.set(-2.8 + Math.cos(ang) * 0.22, 1.0 + leafH / 2, 2.8 + Math.sin(ang) * 0.22);
+        leaf.rotation.y = ang;
+        leaf.rotation.z = (Math.random() - 0.5) * 0.2;
+        leaf.material = leafMat;
+        shadowGenerator.addShadowCaster(leaf);
+      }
+
+      // 右后侧：梯形多层绿植木架
+      const shelfGroup = new BABYLON.TransformNode("shelfGroup");
+      shelfGroup.position.set(2.6, 0, -2.6);
+
+      const shelfWood = createColorMat("sWood", PALETTE.woodDeck, 0.8);
+      for (let s = 1; s <= 3; s++) {
+        const step = BABYLON.MeshBuilder.CreateBox("step", { width: 1.6, height: 0.08, depth: 0.6 }, scene);
+        step.position.set(0, s * 0.9, (3 - s) * 0.35);
+        step.material = shelfWood;
+        step.parent = shelfGroup;
+        shadowGenerator.addShadowCaster(step);
+
+        // 每一层摆放的小多肉或花草
+        const smallPot = BABYLON.MeshBuilder.CreateCylinder("sPot", { diameterTop: 0.32, diameterBottom: 0.24, height: 0.3 }, scene);
+        smallPot.position.set(-0.4, s * 0.9 + 0.19, (3 - s) * 0.35);
+        smallPot.material = potMat;
+        smallPot.parent = shelfGroup;
+
+        const plantMesh = BABYLON.MeshBuilder.CreateSphere("succulent", { diameter: 0.32 }, scene);
+        plantMesh.position.set(-0.4, s * 0.9 + 0.38, (3 - s) * 0.35);
+        plantMesh.material = leafMat;
+        plantMesh.parent = shelfGroup;
+      }
+
+      // 后墙装饰：微光小串灯 (Fairy Lights)
+      const bulbMat = new BABYLON.StandardMaterial("bulbMat", scene);
+      bulbMat.emissiveColor = BABYLON.Color3.FromHexString("#ffebb3");
+
+      const stringCurve = [];
+      for (let p = 0; p <= 10; p++) {
+        const px = -3.2 + p * 0.68;
+        const py = 5.2 - Math.sin((p / 10) * Math.PI) * 0.6; // 垂坠自然弧线
+        stringCurve.push(new BABYLON.Vector3(px, py, -3.95));
+
+        // 每段悬挂小发光圆球
+        if (p % 2 === 1) {
+          const bulb = BABYLON.MeshBuilder.CreateSphere("bulb", { diameter: 0.15 }, scene);
+          bulb.position = new BABYLON.Vector3(px, py - 0.1, -3.92);
+          bulb.material = bulbMat;
+        }
+      }
+      const stringLine = BABYLON.MeshBuilder.CreateLines("fairyLine", { points: stringCurve }, scene);
+      stringLine.color = new BABYLON.Color3(0.5, 0.45, 0.4);
+    }
+
+    // 5. 交互系统与音效
+    function setupAudioAndInteractions() {
+      // 简单 Web Audio 8-bit 治愈风铃声合成
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function playChime(freq = 880) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.2);
+      }
+
+      // 点击场景物体
+      scene.onPointerDown = function (evt, pickResult) {
+        if (pickResult.hit && pickResult.pickedMesh) {
+          const name = String(pickResult.pickedMesh.name || '').toLowerCase();
+          if (name.includes('chair') || name.includes('shell') || name.includes('cushion')) {
+            swingChair();
+            playChime(659.25); // E5
+            window.parent.postMessage({ type:'home-furniture-clicked', room:'garden', fid:'fur-garden-hammock' }, '*');
+          } else if (name.includes('coffee') || name.includes('cup') || name.includes('table')) {
+            playChime(783.99); // G5
+            if (coffeeSteam) coffeeSteam.emitRate = coffeeSteam.emitRate > 30 ? 20 : 80;
+            window.parent.postMessage({ type:'home-furniture-clicked', room:'garden', fid:'fur-garden-table' }, '*');
+          }
+        }
+      };
+    }
+
+    // 吊椅晃动触发
+    function swingChair() {
+      const basket = scene.getNodeByName("basketMesh");
+      if (!basket) return;
+      let power = 0.28;
+      const anim = setInterval(() => {
+        basket.rotation.z += power;
+        power = -power * 0.88;
+        if (Math.abs(power) < 0.005) clearInterval(anim);
+      }, 70);
+    }
+
+    // 昼夜切换模式
+    function setMode(mode) {
+      const btnDay = document.getElementById("btnDay");
+      const btnNight = document.getElementById("btnNight");
+
+      if (mode === "night") {
+        isNight = true;
+        btnDay.classList.remove("active");
+        btnNight.classList.add("active");
+
+        // 柔和夏夜冷光 + 暖黄灯光氛围
+        scene.clearColor = BABYLON.Color4.FromHexString("#2b2c3c");
+        hemiLight.intensity = 0.25;
+        hemiLight.groundColor = new BABYLON.Color3(0.1, 0.1, 0.15);
+        dirLight.intensity = 0.4;
+        dirLight.diffuse = BABYLON.Color3.FromHexString("#89a1c8");
+      } else {
+        isNight = false;
+        btnNight.classList.remove("active");
+        btnDay.classList.add("active");
+
+        // 暖阳午后色温
+        scene.clearColor = BABYLON.Color4.FromHexString("#e8e3dcaa");
+        hemiLight.intensity = 0.65;
+        hemiLight.groundColor = new BABYLON.Color3(0.8, 0.75, 0.7);
+        dirLight.intensity = 1.6;
+        dirLight.diffuse = BABYLON.Color3.FromHexString("#fff6ea");
+      }
+    }
+
+    // 初始化运行
+    const initApp = () => {
+      try {
+        createScene();
+        engine.runRenderLoop(() => {
+          if (scene) scene.render();
+        });
+        window.addEventListener("resize", () => engine.resize());
+        window.parent.postMessage({ type:'home-scene-ready', room:'garden' }, '*');
+      } catch (err) {
+        window.__gardenInitError = String(err && err.stack || err);
+        window.parent.postMessage({ type:'home-scene-error', room:'garden', message:window.__gardenInitError }, '*');
+      }
+    };
+
+    window.addEventListener("DOMContentLoaded", initApp);
+  </script>
+</body>
+</html>
